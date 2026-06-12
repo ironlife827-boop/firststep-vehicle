@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabase } from "@/lib/supabase";
 import {
@@ -197,10 +198,16 @@ export function ScheduleBoard() {
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white p-1.5">
               <Image src="/firststep-logo.svg" alt="첫단추 로고" width={40} height={40} priority />
             </div>
-            <div>
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-emerald-100">영어학원 차량 체크</p>
               <h1 className="text-xl font-bold">첫단추 차량시스템</h1>
             </div>
+            <Link
+              href="/admin?key=firststep2026"
+              className="shrink-0 rounded-lg bg-white px-3 py-2 text-sm font-black text-emerald-800 shadow-sm"
+            >
+              관리
+            </Link>
           </div>
         </header>
 
