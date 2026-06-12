@@ -2,6 +2,10 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 let browserClient: SupabaseClient | null = null;
 
+function cleanEnvValue(value: string) {
+  return value.replace(/^\uFEFF/, "").trim();
+}
+
 export function getSupabase() {
   if (!browserClient) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -11,7 +15,10 @@ export function getSupabase() {
       throw new Error("Supabase environment variables are missing.");
     }
 
-    browserClient = createClient(supabaseUrl, supabaseAnonKey);
+    browserClient = createClient(
+      cleanEnvValue(supabaseUrl),
+      cleanEnvValue(supabaseAnonKey),
+    );
   }
 
   return browserClient;
