@@ -22,6 +22,7 @@ export function AdminPanel() {
   const [students, setStudents] = useState<Student[]>([]);
   const [weeklySchedules, setWeeklySchedules] = useState<WeeklySchedule[]>([]);
   const [exceptions, setExceptions] = useState<ScheduleException[]>([]);
+  const [allExceptionLocations, setAllExceptionLocations] = useState<string[]>([]);
   const [studentName, setStudentName] = useState("");
   const [studentFilter, setStudentFilter] = useState("");
   const [showStudentList, setShowStudentList] = useState(false);
@@ -42,6 +43,8 @@ export function AdminPanel() {
   const [exceptionFilter, setExceptionFilter] = useState("");
   const [scheduleManageDay, setScheduleManageDay] = useState<number | null>(null);
   const [exceptionManageDay, setExceptionManageDay] = useState<number | null>(null);
+  const [selectedLocationName, setSelectedLocationName] = useState("");
+  const [nextLocationName, setNextLocationName] = useState("");
   const [message, setMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
@@ -63,11 +66,20 @@ export function AdminPanel() {
   }, [activeStudents, studentFilter]);
 
   const locations = useMemo(() => {
-    const values = [...weeklySchedules, ...exceptions]
-      .map((item) => item.location)
-      .filter((value): value is string => Boolean(value?.trim()));
+    const values = [
+      ...weeklySchedules.map((item) => item.location),
+      ...allExceptionLocations,
+    ].filter((value): value is string => Boolean(value?.trim()));
     return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, "ko"));
-  }, [weeklySchedules, exceptions]);
+  }, [allExceptionLocations, weeklySchedules]);
+
+  const locationUsages = useMemo(() => {
+    return locations.map((name) => ({
+      name,
+      weeklyCount: weeklySchedules.filter((schedule) => schedule.location === name).length,
+      exceptionCount: allExceptionLocations.filter((locationName) => locationName === name).length,
+    }));
+  }, [allExceptionLocations, locations, weeklySchedules]);
 
   const filteredSchedules = useMemo(() => {
     const keyword = scheduleFilter.trim().toLocaleLowerCase("ko-KR");
@@ -143,7 +155,7 @@ export function AdminPanel() {
 
   async function loadAdminData() {
     const supabase = getSupabase();
-    const [studentsResult, weeklyResult, exceptionsResult] = await Promise.all([
+    const [studentsResult, weeklyResult, exceptionsResult, allExceptionLocationsResult] = await Promise.all([
       supabase.from("students").select("id, name, memo, is_active").order("name"),
       supabase
         .from("weekly_schedules")
@@ -155,9 +167,10 @@ export function AdminPanel() {
         .select("id, student_id, weekly_schedule_id, target_date, run_time, schedule_type, location, exception_type, memo, students(id, name, memo, is_active)")
         .gte("target_date", new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString().slice(0, 10))
         .order("target_date", { ascending: false }),
+      supabase.from("schedule_exceptions").select("location"),
     ]);
 
-    if (studentsResult.error || weeklyResult.error || exceptionsResult.error) {
+    if (studentsResult.error || weeklyResult.error || exceptionsResult.error || allExceptionLocationsResult.error) {
       setMessage(
         studentsResult.error?.message ??
           weeklyResult.error?.message ??
@@ -170,6 +183,11 @@ export function AdminPanel() {
     setStudents((studentsResult.data ?? []) as Student[]);
     setWeeklySchedules((weeklyResult.data ?? []) as unknown as WeeklySchedule[]);
     setExceptions((exceptionsResult.data ?? []) as unknown as ScheduleException[]);
+    setAllExceptionLocations(
+      (allExceptionLocationsResult.data ?? [])
+        .map((item) => item.location)
+        .filter((value): value is string => Boolean(value?.trim())),
+    );
   }
 
   async function addStudent(event: FormEvent<HTMLFormElement>) {
@@ -342,6 +360,71 @@ export function AdminPanel() {
     void loadAdminData();
   }
 
+  async function updateLocationName() {
+    const currentName = selectedLocationName.trim();
+    const normalizedNextName = nextLocationName.trim();
+
+    if (!currentName || !normalizedNextName) {
+      setMessage("수정할 위치와 새 위치 이름을 모두 입력해 주세요.");
+      return;
+    }
+
+    if (currentName === normalizedNextName) {
+      setMessage("기존 위치 이름과 새 위치 이름이 같습니다.");
+      return;
+    }
+
+    const alreadyExists = locations.some(
+      (name) =>
+        name !== currentName &&
+        name.toLocaleLowerCase("ko-KR") === normalizedNextName.toLocaleLowerCase("ko-KR"),
+    );
+
+    if (
+      alreadyExists &&
+      !window.confirm(`${normalizedNextName} 위치가 이미 있습니다. 기존 위치와 합쳐서 변경할까요?`)
+    ) {
+      return;
+    }
+
+    const usage = locationUsages.find((item) => item.name === currentName);
+    const targetCount = (usage?.weeklyCount ?? 0) + (usage?.exceptionCount ?? 0);
+
+    if (
+      !window.confirm(
+        `${currentName} 위치 이름을 ${normalizedNextName}(으)로 변경할까요?\n적용된 일정 ${targetCount}개가 함께 수정됩니다.`,
+      )
+    ) {
+      return;
+    }
+
+    setIsSaving(true);
+    const supabase = getSupabase();
+    const [weeklyResult, exceptionResult] = await Promise.all([
+      supabase.from("weekly_schedules").update({ location: normalizedNextName }).eq("location", currentName),
+      supabase.from("schedule_exceptions").update({ location: normalizedNextName }).eq("location", currentName),
+    ]);
+    setIsSaving(false);
+
+    if (weeklyResult.error || exceptionResult.error) {
+      setMessage(weeklyResult.error?.message ?? exceptionResult.error?.message ?? "위치 이름을 수정하지 못했습니다.");
+      return;
+    }
+
+    if (location === currentName) {
+      setLocation(normalizedNextName);
+    }
+
+    if (exceptionLocation === currentName) {
+      setExceptionLocation(normalizedNextName);
+    }
+
+    setSelectedLocationName("");
+    setNextLocationName("");
+    setMessage("위치 이름과 적용된 일정들을 수정했습니다.");
+    void loadAdminData();
+  }
+
   async function deleteWeeklySchedule(id: string) {
     const { error } = await getSupabase().from("weekly_schedules").delete().eq("id", id);
     if (error) {
@@ -474,6 +557,33 @@ export function AdminPanel() {
               />
               <DayPicker selectedDays={selectedDays} onToggle={toggleDay} />
               <LocationInput value={location} onChange={setLocation} locations={locations} />
+              <div className="space-y-3 rounded-lg border border-emerald-100 bg-emerald-50 p-3">
+                <p className="text-sm font-black text-emerald-900">위치 이름 관리</p>
+                <select
+                  value={selectedLocationName}
+                  onChange={(event) => {
+                    setSelectedLocationName(event.target.value);
+                    setNextLocationName(event.target.value);
+                  }}
+                  className="h-11 w-full rounded-lg border border-emerald-200 bg-white px-3 text-sm font-bold outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                >
+                  <option value="">{locations.length > 0 ? "수정할 위치 선택" : "등록된 위치 없음"}</option>
+                  {locationUsages.map((item) => (
+                    <option key={item.name} value={item.name}>
+                      {item.name} · 반복 {item.weeklyCount}개 · 예외 {item.exceptionCount}개
+                    </option>
+                  ))}
+                </select>
+                <Input value={nextLocationName} onChange={setNextLocationName} placeholder="새 위치 이름" />
+                <button
+                  type="button"
+                  disabled={isSaving || !selectedLocationName}
+                  onClick={() => void updateLocationName()}
+                  className="h-11 w-full rounded-lg bg-emerald-700 text-sm font-black text-white disabled:bg-stone-300"
+                >
+                  위치 이름 수정
+                </button>
+              </div>
               <SubmitButton disabled={isSaving}>스케줄 등록</SubmitButton>
             </form>
           </Panel>
