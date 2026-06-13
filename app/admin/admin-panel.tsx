@@ -557,35 +557,37 @@ export function AdminPanel() {
               />
               <DayPicker selectedDays={selectedDays} onToggle={toggleDay} />
               <LocationInput value={location} onChange={setLocation} locations={locations} />
-              <div className="space-y-3 rounded-lg border border-emerald-100 bg-emerald-50 p-3">
-                <p className="text-sm font-black text-emerald-900">위치 이름 관리</p>
-                <select
-                  value={selectedLocationName}
-                  onChange={(event) => {
-                    setSelectedLocationName(event.target.value);
-                    setNextLocationName(event.target.value);
-                  }}
-                  className="h-11 w-full rounded-lg border border-emerald-200 bg-white px-3 text-sm font-bold outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-                >
-                  <option value="">{locations.length > 0 ? "수정할 위치 선택" : "등록된 위치 없음"}</option>
-                  {locationUsages.map((item) => (
-                    <option key={item.name} value={item.name}>
-                      {item.name} · 반복 {item.weeklyCount}개 · 예외 {item.exceptionCount}개
-                    </option>
-                  ))}
-                </select>
-                <Input value={nextLocationName} onChange={setNextLocationName} placeholder="새 위치 이름" />
-                <button
-                  type="button"
-                  disabled={isSaving || !selectedLocationName}
-                  onClick={() => void updateLocationName()}
-                  className="h-11 w-full rounded-lg bg-emerald-700 text-sm font-black text-white disabled:bg-stone-300"
-                >
-                  위치 이름 수정
-                </button>
-              </div>
               <SubmitButton disabled={isSaving}>스케줄 등록</SubmitButton>
             </form>
+          </Panel>
+
+          <Panel title="위치 이름 관리">
+            <div className="space-y-3">
+              <select
+                value={selectedLocationName}
+                onChange={(event) => {
+                  setSelectedLocationName(event.target.value);
+                  setNextLocationName(event.target.value);
+                }}
+                className="h-11 w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-bold outline-none focus:border-emerald-600 focus:bg-white focus:ring-2 focus:ring-emerald-100"
+              >
+                <option value="">{locations.length > 0 ? "수정할 위치 선택" : "등록된 위치 없음"}</option>
+                {locationUsages.map((item) => (
+                  <option key={item.name} value={item.name}>
+                    {item.name} · 반복 {item.weeklyCount}개 · 예외 {item.exceptionCount}개
+                  </option>
+                ))}
+              </select>
+              <Input value={nextLocationName} onChange={setNextLocationName} placeholder="새 위치 이름" />
+              <button
+                type="button"
+                disabled={isSaving || !selectedLocationName}
+                onClick={() => void updateLocationName()}
+                className="h-11 w-full rounded-lg bg-emerald-700 text-sm font-black text-white disabled:bg-stone-300"
+              >
+                위치 이름 수정
+              </button>
+            </div>
           </Panel>
 
           <Panel title="이번 주 예외 등록">
@@ -689,10 +691,23 @@ function getKoreanWeekday(date: string) {
 }
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  const [isOpen, setIsOpen] = useState(false);
+
   return (
-    <section className="rounded-lg border border-emerald-100 bg-white p-4 shadow-sm">
-      <h2 className="mb-3 text-lg font-black text-emerald-900">{title}</h2>
-      {children}
+    <section className="overflow-hidden rounded-lg border border-emerald-100 bg-white shadow-sm">
+      <button
+        type="button"
+        onClick={() => setIsOpen((value) => !value)}
+        className={`flex min-h-14 w-full items-center justify-between gap-3 px-4 py-3 text-left transition ${
+          isOpen ? "bg-emerald-700 text-white" : "bg-white text-emerald-900"
+        }`}
+      >
+        <span className="text-base font-black">{title}</span>
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-lg font-black text-emerald-800">
+          {isOpen ? "−" : "+"}
+        </span>
+      </button>
+      {isOpen ? <div className="space-y-3 border-t border-emerald-100 p-4">{children}</div> : null}
     </section>
   );
 }
