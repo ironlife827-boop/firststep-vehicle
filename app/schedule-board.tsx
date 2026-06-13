@@ -61,8 +61,54 @@ export function ScheduleBoard() {
     [groups, showPastSchedules, targetDate],
   );
 
-  const loadSchedule = useCallback(async () => {
-    setIsLoading(true);
+  const mergeStatus = useCallback((nextStatus: DailyScheduleStatus) => {
+    if (nextStatus.target_date !== targetDate) {
+      return;
+    }
+
+    const nextKey = statusKey(
+      nextStatus.weekly_schedule_id,
+      nextStatus.schedule_exception_id,
+      nextStatus.target_date,
+      nextStatus.student_id,
+    );
+
+    setStatuses((prev) => {
+      const index = prev.findIndex((status) => {
+        if (status.id === nextStatus.id) {
+          return true;
+        }
+
+        return (
+          statusKey(
+            status.weekly_schedule_id,
+            status.schedule_exception_id,
+            status.target_date,
+            status.student_id,
+          ) === nextKey
+        );
+      });
+
+      if (index === -1) {
+        return [...prev, nextStatus];
+      }
+
+      const next = [...prev];
+      next[index] = nextStatus;
+      return next;
+    });
+  }, [targetDate]);
+
+  const removeStatus = useCallback((removedStatus: DailyScheduleStatus) => {
+    setStatuses((prev) => prev.filter((status) => status.id !== removedStatus.id));
+  }, []);
+
+  const loadSchedule = useCallback(async (options?: { showLoading?: boolean }) => {
+    const showLoading = options?.showLoading ?? true;
+
+    if (showLoading) {
+      setIsLoading(true);
+    }
     setErrorMessage("");
 
     const supabase = getSupabase();
@@ -97,12 +143,14 @@ export function ScheduleBoard() {
       setStatuses((statusResult.data ?? []) as unknown as DailyScheduleStatus[]);
     }
 
-    setIsLoading(false);
+    if (showLoading) {
+      setIsLoading(false);
+    }
   }, [selectedDay, targetDate]);
 
   useEffect(() => {
     queueMicrotask(() => {
-      void loadSchedule();
+      void loadSchedule({ showLoading: true });
     });
 
     const supabase = getSupabase();
@@ -111,24 +159,31 @@ export function ScheduleBoard() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "daily_schedule_status" },
-        () => void loadSchedule(),
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            removeStatus(payload.old as DailyScheduleStatus);
+            return;
+          }
+
+          mergeStatus(payload.new as DailyScheduleStatus);
+        },
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "weekly_schedules" },
-        () => void loadSchedule(),
+        () => void loadSchedule({ showLoading: false }),
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "schedule_exceptions" },
-        () => void loadSchedule(),
+        () => void loadSchedule({ showLoading: false }),
       )
       .subscribe();
 
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [loadSchedule, selectedDay, targetDate]);
+  }, [loadSchedule, mergeStatus, removeStatus, selectedDay, targetDate]);
 
   async function toggleDone(item: ScheduleItem) {
     const key = statusKey(
@@ -175,20 +230,26 @@ export function ScheduleBoard() {
 
     setStatuses((prev) => [...prev, newStatus]);
 
-    const { error } = await supabase.from("daily_schedule_status").insert({
-      weekly_schedule_id: item.weekly_schedule_id,
-      schedule_exception_id: item.schedule_exception_id,
-      target_date: item.target_date,
-      student_id: item.student_id,
-      is_done: true,
-      done_at: new Date().toISOString(),
-    });
+    const { data, error } = await supabase
+      .from("daily_schedule_status")
+      .insert({
+        weekly_schedule_id: item.weekly_schedule_id,
+        schedule_exception_id: item.schedule_exception_id,
+        target_date: item.target_date,
+        student_id: item.student_id,
+        is_done: true,
+        done_at: new Date().toISOString(),
+      })
+      .select("id, weekly_schedule_id, schedule_exception_id, target_date, student_id, is_done, done_at")
+      .single();
 
     if (error) {
       setErrorMessage(error.message);
+      void loadSchedule({ showLoading: false });
+      return;
     }
 
-    void loadSchedule();
+    mergeStatus(data as DailyScheduleStatus);
   }
 
   function toggleGroup(key: string) {
