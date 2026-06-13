@@ -247,6 +247,33 @@ export function AdminPanel() {
       return;
     }
 
+    const normalizedLocation = location.trim();
+    const duplicateSchedules = weeklySchedules.filter(
+      (schedule) =>
+        schedule.is_active &&
+        scheduleStudentIds.includes(schedule.student_id ?? "") &&
+        selectedDays.includes(schedule.day_of_week) &&
+        formatTime(schedule.run_time) === runTime &&
+        schedule.schedule_type === scheduleType &&
+        schedule.location.trim().toLocaleLowerCase("ko-KR") === normalizedLocation.toLocaleLowerCase("ko-KR"),
+    );
+
+    if (duplicateSchedules.length > 0) {
+      const duplicateNames = Array.from(
+        new Set(duplicateSchedules.map((schedule) => schedule.students?.name).filter(Boolean)),
+      ).join(", ");
+
+      if (
+        !window.confirm(
+          `같은 반복 스케줄이 이미 ${duplicateSchedules.length}개 있습니다.\n${
+            duplicateNames ? `학생: ${duplicateNames}\n` : ""
+          }그래도 등록할까요?`,
+        )
+      ) {
+        return;
+      }
+    }
+
     setIsSaving(true);
     const { error } = await getSupabase().from("weekly_schedules").insert(
       scheduleStudentIds.flatMap((studentId) =>
@@ -255,7 +282,7 @@ export function AdminPanel() {
           day_of_week: day,
           run_time: runTime,
           schedule_type: scheduleType,
-          location: location.trim(),
+          location: normalizedLocation,
           is_active: true,
         })),
       ),
