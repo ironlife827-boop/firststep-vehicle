@@ -23,6 +23,8 @@ export function AdminPanel() {
   const [weeklySchedules, setWeeklySchedules] = useState<WeeklySchedule[]>([]);
   const [exceptions, setExceptions] = useState<ScheduleException[]>([]);
   const [studentName, setStudentName] = useState("");
+  const [studentFilter, setStudentFilter] = useState("");
+  const [showStudentList, setShowStudentList] = useState(false);
   const [scheduleStudentId, setScheduleStudentId] = useState("");
   const [selectedDays, setSelectedDays] = useState<number[]>([1]);
   const [runTime, setRunTime] = useState("15:20");
@@ -47,6 +49,18 @@ export function AdminPanel() {
     () => students.filter((student) => student.is_active).sort((a, b) => a.name.localeCompare(b.name, "ko")),
     [students],
   );
+
+  const filteredStudents = useMemo(() => {
+    const keyword = studentFilter.trim().toLocaleLowerCase("ko-KR");
+
+    if (!keyword) {
+      return activeStudents;
+    }
+
+    return activeStudents.filter((student) =>
+      student.name.toLocaleLowerCase("ko-KR").includes(keyword),
+    );
+  }, [activeStudents, studentFilter]);
 
   const locations = useMemo(() => {
     const values = [...weeklySchedules, ...exceptions]
@@ -364,31 +378,43 @@ export function AdminPanel() {
               <Input value={studentName} onChange={setStudentName} placeholder="학생 이름" />
               <SubmitButton disabled={isSaving}>학생 등록</SubmitButton>
             </form>
-            <div className="mt-4 max-h-56 space-y-2 overflow-y-auto pr-1">
-              {activeStudents.length === 0 ? (
-                <p className="rounded-lg bg-stone-50 px-3 py-4 text-sm font-medium text-stone-500">
-                  등록된 학생이 없습니다.
-                </p>
-              ) : (
-                activeStudents.map((student) => (
-                  <div
-                    key={student.id}
-                    className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-sm font-black text-stone-900">
-                      {student.name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => deleteStudent(student)}
-                      className="h-9 shrink-0 rounded-lg bg-red-50 px-3 text-xs font-black text-red-700"
-                    >
-                      삭제
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => setShowStudentList((value) => !value)}
+              className="mt-3 h-11 w-full rounded-lg border border-emerald-200 bg-emerald-50 text-sm font-black text-emerald-800"
+            >
+              {showStudentList ? "학생 목록 숨기기" : `전체 학생 목록 보기 ${activeStudents.length}명`}
+            </button>
+            {showStudentList ? (
+              <div className="mt-3 space-y-3">
+                <Input value={studentFilter} onChange={setStudentFilter} placeholder="학생 이름 검색" />
+                <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                  {filteredStudents.length === 0 ? (
+                    <p className="rounded-lg bg-stone-50 px-3 py-4 text-sm font-medium text-stone-500">
+                      검색된 학생이 없습니다.
+                    </p>
+                  ) : (
+                    filteredStudents.map((student) => (
+                      <div
+                        key={student.id}
+                        className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-sm font-black text-stone-900">
+                          {student.name}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => deleteStudent(student)}
+                          className="h-9 shrink-0 rounded-lg bg-red-50 px-3 text-xs font-black text-red-700"
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : null}
           </Panel>
 
           <Panel title="반복 스케줄 등록">
