@@ -209,7 +209,14 @@ export function ScheduleBoard() {
         <header className="bg-emerald-700 px-5 pb-5 pt-4 text-white">
           <div className="flex items-center gap-3">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white p-1.5">
-              <Image src="/firststep-logo.svg" alt="첫단추 로고" width={40} height={40} priority />
+              <Image
+                src="/firststep-logo.jpg"
+                alt="첫단추 로고"
+                width={40}
+                height={40}
+                className="rounded-md"
+                priority
+              />
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-emerald-100">영어학원 차량 체크</p>

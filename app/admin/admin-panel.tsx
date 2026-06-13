@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { DAYS, formatTime, TYPE_LABEL } from "@/lib/schedule";
@@ -286,9 +287,21 @@ export function AdminPanel() {
       <div className="mx-auto w-full max-w-[430px] bg-white pb-12 shadow-sm">
         <header className="bg-emerald-700 px-5 py-5 text-white">
           <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-emerald-100">관리자</p>
-              <h1 className="text-xl font-black">첫단추 차량시스템</h1>
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white p-1.5">
+                <Image
+                  src="/firststep-logo.jpg"
+                  alt="첫단추 로고"
+                  width={40}
+                  height={40}
+                  className="rounded-md"
+                  priority
+                />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-emerald-100">관리자</p>
+                <h1 className="text-xl font-black">첫단추 차량시스템</h1>
+              </div>
             </div>
             <Link href="/" className="rounded-lg bg-white px-3 py-2 text-sm font-bold text-emerald-800">
               메인
@@ -574,20 +587,30 @@ function LocationInput({
   locations: string[];
 }) {
   return (
-    <>
+    <div className="space-y-2">
+      <select
+        value=""
+        onChange={(event) => {
+          if (event.target.value) {
+            onChange(event.target.value);
+          }
+        }}
+        className="h-11 w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-bold outline-none focus:border-emerald-600 focus:bg-white focus:ring-2 focus:ring-emerald-100"
+      >
+        <option value="">{locations.length > 0 ? "등록된 위치 선택" : "등록된 위치 없음"}</option>
+        {locations.map((item) => (
+          <option key={item} value={item}>
+            {item}
+          </option>
+        ))}
+      </select>
       <input
-        list="location-options"
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="위치 입력 또는 선택"
+        placeholder="새 위치 입력 또는 선택한 위치 수정"
         className="h-11 w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-medium outline-none focus:border-emerald-600 focus:bg-white focus:ring-2 focus:ring-emerald-100"
       />
-      <datalist id="location-options">
-        {locations.map((item) => (
-          <option key={item} value={item} />
-        ))}
-      </datalist>
-    </>
+    </div>
   );
 }
 
