@@ -49,6 +49,7 @@ export function AdminPanel() {
   const [location, setLocation] = useState("");
   const [academyDropDays, setAcademyDropDays] = useState<number[]>([1]);
   const [academyDropTime, setAcademyDropTime] = useState("18:00");
+  const [academyDropManageDay, setAcademyDropManageDay] = useState<number | null>(null);
   const [exceptionType, setExceptionType] = useState<ExceptionType>("ADD");
   const [exceptionStudentIds, setExceptionStudentIds] = useState<string[]>([]);
   const [exceptionGroupKey, setExceptionGroupKey] = useState("");
@@ -137,6 +138,21 @@ export function AdminPanel() {
   }, [scheduleFilter, scheduleManageDay, weeklySchedules]);
 
   const filteredScheduleGroups = useMemo(() => groupWeeklySchedules(filteredSchedules), [filteredSchedules]);
+
+  const filteredAcademyDropSchedules = useMemo(() => {
+    return weeklySchedules
+      .filter((schedule) => schedule.student_id === null)
+      .filter((schedule) => schedule.schedule_type === "DROP")
+      .filter((schedule) => schedule.location === ACADEMY_DROP_LOCATION)
+      .filter((schedule) => academyDropManageDay === null || schedule.day_of_week === academyDropManageDay)
+      .sort((a, b) => {
+        if (a.day_of_week !== b.day_of_week) {
+          return a.day_of_week - b.day_of_week;
+        }
+
+        return formatTime(a.run_time).localeCompare(formatTime(b.run_time));
+      });
+  }, [academyDropManageDay, weeklySchedules]);
 
   const exceptionScheduleGroups = useMemo(() => {
     if (!exceptionDate || exceptionType === "ADD") {
@@ -479,6 +495,22 @@ export function AdminPanel() {
     }
 
     setMessage(`학원드랍 일정을 저장했습니다. 새로 등록 ${rowsToInsert.length}개, 덮어쓰기 ${rowsToUpdate.length}개`);
+    void loadAdminData();
+  }
+
+  async function deleteAcademyDropSchedule(id: string) {
+    if (!window.confirm("학원드랍 일정을 삭제할까요?")) {
+      return;
+    }
+
+    const { error } = await getSupabase().from("weekly_schedules").delete().eq("id", id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("학원드랍 일정을 삭제했습니다.");
     void loadAdminData();
   }
 
@@ -856,6 +888,24 @@ export function AdminPanel() {
               </div>
               <SubmitButton disabled={isSaving}>학원드랍 등록</SubmitButton>
             </form>
+            <div className="mt-4 border-t border-emerald-100 pt-4">
+              <ManageDayTabs selectedDay={academyDropManageDay} onSelect={setAcademyDropManageDay} />
+              <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+                {filteredAcademyDropSchedules.length === 0 ? (
+                  <p className="rounded-lg bg-stone-50 px-3 py-4 text-sm font-medium text-stone-500">
+                    등록된 학원드랍 일정이 없습니다.
+                  </p>
+                ) : (
+                  filteredAcademyDropSchedules.map((schedule) => (
+                    <AcademyDropManageRow
+                      key={schedule.id}
+                      schedule={schedule}
+                      onDelete={() => void deleteAcademyDropSchedule(schedule.id)}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
           </Panel>
 
           <Panel title="위치 이름 관리">
@@ -1240,6 +1290,32 @@ function CheckLogRow({ log }: { log: CheckLog }) {
       <p className="mt-1 truncate text-xs font-bold text-stone-500">
         {log.target_date} {time} {typeLabel} {location}
       </p>
+    </div>
+  );
+}
+
+function AcademyDropManageRow({
+  schedule,
+  onDelete,
+}: {
+  schedule: WeeklySchedule;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-cyan-100 bg-cyan-50 px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-black text-cyan-950">
+          {DAYS.find((day) => day.value === schedule.day_of_week)?.label} {formatTime(schedule.run_time)}
+        </p>
+        <p className="truncate text-xs font-bold text-cyan-700">첫단추영어학원 드랍</p>
+      </div>
+      <button
+        type="button"
+        onClick={onDelete}
+        className="h-9 shrink-0 rounded-lg bg-red-50 px-3 text-xs font-black text-red-700"
+      >
+        삭제
+      </button>
     </div>
   );
 }
