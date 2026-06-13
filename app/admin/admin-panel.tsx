@@ -25,7 +25,7 @@ export function AdminPanel() {
   const [studentName, setStudentName] = useState("");
   const [studentFilter, setStudentFilter] = useState("");
   const [showStudentList, setShowStudentList] = useState(false);
-  const [scheduleStudentId, setScheduleStudentId] = useState("");
+  const [scheduleStudentIds, setScheduleStudentIds] = useState<string[]>([]);
   const [selectedDays, setSelectedDays] = useState<number[]>([1]);
   const [runTime, setRunTime] = useState("15:20");
   const [scheduleType, setScheduleType] = useState<Exclude<ScheduleType, "MOVE">>("PICKUP");
@@ -227,8 +227,8 @@ export function AdminPanel() {
       return;
     }
 
-    if (scheduleStudentId === student.id) {
-      setScheduleStudentId("");
+    if (scheduleStudentIds.includes(student.id)) {
+      setScheduleStudentIds((current) => current.filter((id) => id !== student.id));
     }
 
     if (exceptionStudentId === student.id) {
@@ -242,21 +242,23 @@ export function AdminPanel() {
   async function addWeeklySchedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!scheduleStudentId || !location.trim() || !runTime || selectedDays.length === 0) {
+    if (scheduleStudentIds.length === 0 || !location.trim() || !runTime || selectedDays.length === 0) {
       setMessage("학생, 요일, 시간, 위치를 모두 입력해 주세요.");
       return;
     }
 
     setIsSaving(true);
     const { error } = await getSupabase().from("weekly_schedules").insert(
-      selectedDays.map((day) => ({
-        student_id: scheduleStudentId,
-        day_of_week: day,
-        run_time: runTime,
-        schedule_type: scheduleType,
-        location: location.trim(),
-        is_active: true,
-      })),
+      scheduleStudentIds.flatMap((studentId) =>
+        selectedDays.map((day) => ({
+          student_id: studentId,
+          day_of_week: day,
+          run_time: runTime,
+          schedule_type: scheduleType,
+          location: location.trim(),
+          is_active: true,
+        })),
+      ),
     );
     setIsSaving(false);
 
@@ -266,7 +268,7 @@ export function AdminPanel() {
     }
 
     setLocation("");
-    setMessage(`${selectedDays.length}개 요일에 반복 스케줄을 등록했습니다.`);
+    setMessage(`${scheduleStudentIds.length}명, ${selectedDays.length}개 요일에 반복 스케줄을 등록했습니다.`);
     void loadAdminData();
   }
 
@@ -336,6 +338,14 @@ export function AdminPanel() {
       current.includes(day)
         ? current.filter((value) => value !== day)
         : [...current, day].sort((a, b) => a - b),
+    );
+  }
+
+  function toggleScheduleStudent(studentId: string) {
+    setScheduleStudentIds((current) =>
+      current.includes(studentId)
+        ? current.filter((id) => id !== studentId)
+        : [...current, studentId],
     );
   }
 
@@ -429,14 +439,12 @@ export function AdminPanel() {
                 </Select>
                 <Input type="time" value={runTime} onChange={setRunTime} placeholder="시간" />
               </div>
-              <Select value={scheduleStudentId} onChange={setScheduleStudentId}>
-                <option value="">학생 선택</option>
-                {activeStudents.map((student) => (
-                  <option key={student.id} value={student.id}>
-                    {student.name}
-                  </option>
-                ))}
-              </Select>
+              <StudentMultiPicker
+                students={activeStudents}
+                selectedIds={scheduleStudentIds}
+                onToggle={toggleScheduleStudent}
+                onClear={() => setScheduleStudentIds([])}
+              />
               <DayPicker selectedDays={selectedDays} onToggle={toggleDay} />
               <LocationInput value={location} onChange={setLocation} locations={locations} />
               <SubmitButton disabled={isSaving}>스케줄 등록</SubmitButton>
@@ -575,6 +583,70 @@ function DayPicker({
           {day.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+function StudentMultiPicker({
+  students,
+  selectedIds,
+  onToggle,
+  onClear,
+}: {
+  students: Student[];
+  selectedIds: string[];
+  onToggle: (studentId: string) => void;
+  onClear: () => void;
+}) {
+  const [keyword, setKeyword] = useState("");
+  const visibleStudents = useMemo(() => {
+    const value = keyword.trim().toLocaleLowerCase("ko-KR");
+    if (!value) {
+      return students;
+    }
+
+    return students.filter((student) => student.name.toLocaleLowerCase("ko-KR").includes(value));
+  }, [keyword, students]);
+
+  return (
+    <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-black text-emerald-900">학생 선택 {selectedIds.length}명</p>
+        {selectedIds.length > 0 ? (
+          <button type="button" onClick={onClear} className="text-xs font-black text-red-600">
+            선택 해제
+          </button>
+        ) : null}
+      </div>
+      <div className="mt-2">
+        <Input value={keyword} onChange={setKeyword} placeholder="학생 이름 검색" />
+      </div>
+      <div className="mt-2 grid max-h-48 grid-cols-2 gap-2 overflow-y-auto pr-1">
+        {visibleStudents.length === 0 ? (
+          <p className="col-span-2 rounded-lg bg-white px-3 py-3 text-sm font-medium text-stone-500">
+            검색된 학생이 없습니다.
+          </p>
+        ) : (
+          visibleStudents.map((student) => {
+            const isSelected = selectedIds.includes(student.id);
+
+            return (
+              <button
+                key={student.id}
+                type="button"
+                onClick={() => onToggle(student.id)}
+                className={`min-h-10 rounded-lg border px-3 py-2 text-left text-sm font-black ${
+                  isSelected
+                    ? "border-emerald-700 bg-emerald-700 text-white"
+                    : "border-emerald-200 bg-white text-stone-800"
+                }`}
+              >
+                {student.name}
+              </button>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
