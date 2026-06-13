@@ -160,13 +160,28 @@ export function AdminPanel() {
 
   async function addStudent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!studentName.trim()) {
+    const trimmedName = studentName.trim();
+
+    if (!trimmedName) {
+      return;
+    }
+
+    const hasSameName = students.some(
+      (student) =>
+        student.is_active &&
+        student.name.trim().toLocaleLowerCase("ko-KR") === trimmedName.toLocaleLowerCase("ko-KR"),
+    );
+
+    if (
+      hasSameName &&
+      !window.confirm(`${trimmedName} 학생이 이미 있습니다. 그래도 새로 등록할까요?`)
+    ) {
       return;
     }
 
     setIsSaving(true);
     const { error } = await getSupabase().from("students").insert({
-      name: studentName.trim(),
+      name: trimmedName,
       memo: null,
       is_active: true,
     });
@@ -179,6 +194,34 @@ export function AdminPanel() {
 
     setStudentName("");
     setMessage("학생을 등록했습니다.");
+    void loadAdminData();
+  }
+
+  async function deleteStudent(student: Student) {
+    if (
+      !window.confirm(
+        `${student.name} 학생을 삭제할까요?\n등록된 반복 스케줄과 체크 기록도 함께 삭제될 수 있습니다.`,
+      )
+    ) {
+      return;
+    }
+
+    const { error } = await getSupabase().from("students").delete().eq("id", student.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    if (scheduleStudentId === student.id) {
+      setScheduleStudentId("");
+    }
+
+    if (exceptionStudentId === student.id) {
+      setExceptionStudentId("");
+    }
+
+    setMessage("학생을 삭제했습니다.");
     void loadAdminData();
   }
 
@@ -321,6 +364,31 @@ export function AdminPanel() {
               <Input value={studentName} onChange={setStudentName} placeholder="학생 이름" />
               <SubmitButton disabled={isSaving}>학생 등록</SubmitButton>
             </form>
+            <div className="mt-4 max-h-56 space-y-2 overflow-y-auto pr-1">
+              {activeStudents.length === 0 ? (
+                <p className="rounded-lg bg-stone-50 px-3 py-4 text-sm font-medium text-stone-500">
+                  등록된 학생이 없습니다.
+                </p>
+              ) : (
+                activeStudents.map((student) => (
+                  <div
+                    key={student.id}
+                    className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-sm font-black text-stone-900">
+                      {student.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => deleteStudent(student)}
+                      className="h-9 shrink-0 rounded-lg bg-red-50 px-3 text-xs font-black text-red-700"
+                    >
+                      삭제
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
           </Panel>
 
           <Panel title="반복 스케줄 등록">
