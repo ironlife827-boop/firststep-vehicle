@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { DAYS, formatTime, TYPE_LABEL } from "@/lib/schedule";
+import { ACADEMY_DROP_LOCATION, DAYS, formatTime, TYPE_LABEL } from "@/lib/schedule";
 import { getSupabase } from "@/lib/supabase";
 import type { ExceptionType, ScheduleException, ScheduleType, Student, WeeklySchedule } from "@/lib/types";
 
@@ -31,6 +31,8 @@ export function AdminPanel() {
   const [runTime, setRunTime] = useState("15:20");
   const [scheduleType, setScheduleType] = useState<Exclude<ScheduleType, "MOVE">>("PICKUP");
   const [location, setLocation] = useState("");
+  const [academyDropDays, setAcademyDropDays] = useState<number[]>([1]);
+  const [academyDropTime, setAcademyDropTime] = useState("18:00");
   const [exceptionType, setExceptionType] = useState<ExceptionType>("ADD");
   const [exceptionStudentId, setExceptionStudentId] = useState("");
   const [exceptionWeeklyId, setExceptionWeeklyId] = useState("");
@@ -346,6 +348,75 @@ export function AdminPanel() {
     void loadAdminData();
   }
 
+  async function addAcademyDropSchedule(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!academyDropTime || academyDropDays.length === 0) {
+      setMessage("학원드랍 요일과 시간을 선택해 주세요.");
+      return;
+    }
+
+    const scheduleRows = academyDropDays.map((day) => ({
+      student_id: null,
+      day_of_week: day,
+      run_time: academyDropTime,
+      schedule_type: "DROP" as const,
+      location: ACADEMY_DROP_LOCATION,
+      is_active: true,
+    }));
+    const findDuplicateSchedules = (row: (typeof scheduleRows)[number]) =>
+      weeklySchedules.filter(
+        (schedule) =>
+          schedule.is_active &&
+          schedule.student_id === null &&
+          schedule.day_of_week === row.day_of_week &&
+          formatTime(schedule.run_time) === row.run_time &&
+          schedule.schedule_type === row.schedule_type &&
+          schedule.location === row.location,
+      );
+    const duplicateSchedules = scheduleRows.flatMap((row) => findDuplicateSchedules(row));
+
+    if (
+      duplicateSchedules.length > 0 &&
+      !window.confirm(`같은 학원드랍 일정이 이미 ${duplicateSchedules.length}개 있습니다. 기존 일정에 덮어쓸까요?`)
+    ) {
+      return;
+    }
+
+    setIsSaving(true);
+    const supabase = getSupabase();
+    const rowsToInsert = scheduleRows.filter((row) => findDuplicateSchedules(row).length === 0);
+    const rowsToUpdate = scheduleRows.flatMap((row) =>
+      findDuplicateSchedules(row).map((schedule) => ({
+        id: schedule.id,
+        row,
+      })),
+    );
+    const [insertResult, updateResults] = await Promise.all([
+      rowsToInsert.length > 0
+        ? supabase.from("weekly_schedules").insert(rowsToInsert)
+        : Promise.resolve({ error: null }),
+      Promise.all(
+        rowsToUpdate.map(({ id, row }) =>
+          supabase
+            .from("weekly_schedules")
+            .update(row)
+            .eq("id", id),
+        ),
+      ),
+    ]);
+    setIsSaving(false);
+
+    const updateError = updateResults.find((result) => result.error)?.error;
+    if (insertResult.error || updateError) {
+      setMessage(insertResult.error?.message ?? updateError?.message ?? "학원드랍 일정을 저장하지 못했습니다.");
+      return;
+    }
+
+    setMessage(`학원드랍 일정을 저장했습니다. 새로 등록 ${rowsToInsert.length}개, 덮어쓰기 ${rowsToUpdate.length}개`);
+    void loadAdminData();
+  }
+
   async function addException(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -480,6 +551,14 @@ export function AdminPanel() {
     );
   }
 
+  function toggleAcademyDropDay(day: number) {
+    setAcademyDropDays((current) =>
+      current.includes(day)
+        ? current.filter((value) => value !== day)
+        : [...current, day].sort((a, b) => a - b),
+    );
+  }
+
   function toggleScheduleStudent(studentId: string) {
     setScheduleStudentIds((current) =>
       current.includes(studentId)
@@ -587,6 +666,17 @@ export function AdminPanel() {
               <DayPicker selectedDays={selectedDays} onToggle={toggleDay} />
               <LocationInput value={location} onChange={setLocation} locations={locations} />
               <SubmitButton disabled={isSaving}>스케줄 등록</SubmitButton>
+            </form>
+          </Panel>
+
+          <Panel title="학원드랍 등록">
+            <form onSubmit={addAcademyDropSchedule} className="space-y-3">
+              <DayPicker selectedDays={academyDropDays} onToggle={toggleAcademyDropDay} />
+              <Input type="time" value={academyDropTime} onChange={setAcademyDropTime} placeholder="시간" />
+              <div className="rounded-lg border border-cyan-100 bg-cyan-50 px-3 py-2 text-sm font-black text-cyan-900">
+                {formatTime(academyDropTime)} 첫단추영어학원 드랍
+              </div>
+              <SubmitButton disabled={isSaving}>학원드랍 등록</SubmitButton>
             </form>
           </Panel>
 
@@ -873,12 +963,15 @@ function CompactScheduleRow({
   schedule: WeeklySchedule;
   onDelete: () => void;
 }) {
+  const isAcademyDrop =
+    schedule.student_id === null && schedule.schedule_type === "DROP" && schedule.location === ACADEMY_DROP_LOCATION;
+
   return (
     <div className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2">
       <div className="min-w-0 flex-1">
         <div className="text-sm font-black text-stone-900">
           {DAYS.find((day) => day.value === schedule.day_of_week)?.label} {formatTime(schedule.run_time)} ·{" "}
-          {TYPE_LABEL[schedule.schedule_type]} · {schedule.students?.name ?? "학생 없음"}
+          {isAcademyDrop ? "학원드랍" : `${TYPE_LABEL[schedule.schedule_type]} · ${schedule.students?.name ?? "학생 없음"}`}
         </div>
         <p className="truncate text-xs font-medium text-stone-500">{schedule.location}</p>
       </div>

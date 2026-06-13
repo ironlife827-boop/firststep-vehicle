@@ -20,6 +20,16 @@ export const TYPE_LABEL = {
   MOVE: "이동",
 } as const;
 
+export const ACADEMY_DROP_LOCATION = "첫단추영어학원";
+
+export function isAcademyDropItem(item: Pick<ScheduleItem, "student_id" | "schedule_type" | "location">) {
+  return item.student_id === null && item.schedule_type === "DROP" && item.location === ACADEMY_DROP_LOCATION;
+}
+
+export function isAcademyDropGroup(group: Pick<ScheduleGroup, "items" | "schedule_type" | "location">) {
+  return group.schedule_type === "DROP" && group.location === ACADEMY_DROP_LOCATION && group.items.every(isAcademyDropItem);
+}
+
 export function getTodayDayOfWeek() {
   const day = new Date().getDay();
   if (day >= 1 && day <= 5) {
