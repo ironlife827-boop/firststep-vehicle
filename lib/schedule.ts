@@ -178,11 +178,7 @@ export function isPastScheduleTime(targetDate: string, runTime: string) {
   const now = new Date();
   const today = formatDate(now);
 
-  if (targetDate < today) {
-    return true;
-  }
-
-  if (targetDate > today) {
+  if (targetDate !== today) {
     return false;
   }
 
