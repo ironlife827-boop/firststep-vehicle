@@ -37,6 +37,8 @@ export function AdminPanel() {
   const [exceptionMemo, setExceptionMemo] = useState("");
   const [scheduleFilter, setScheduleFilter] = useState("");
   const [exceptionFilter, setExceptionFilter] = useState("");
+  const [scheduleManageDay, setScheduleManageDay] = useState<number | null>(null);
+  const [exceptionManageDay, setExceptionManageDay] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
@@ -56,6 +58,7 @@ export function AdminPanel() {
     const keyword = scheduleFilter.trim().toLocaleLowerCase("ko-KR");
     const schedules = weeklySchedules
       .filter((schedule) => schedule.schedule_type !== "MOVE")
+      .filter((schedule) => scheduleManageDay === null || schedule.day_of_week === scheduleManageDay)
       .sort((a, b) => {
         if (a.day_of_week !== b.day_of_week) {
           return a.day_of_week - b.day_of_week;
@@ -80,17 +83,19 @@ export function AdminPanel() {
         .filter(Boolean)
         .some((value) => value?.toLocaleLowerCase("ko-KR").includes(keyword)),
     );
-  }, [scheduleFilter, weeklySchedules]);
+  }, [scheduleFilter, scheduleManageDay, weeklySchedules]);
 
   const filteredExceptions = useMemo(() => {
     const keyword = exceptionFilter.trim().toLocaleLowerCase("ko-KR");
-    const sorted = [...exceptions].sort((a, b) => {
-      const dateCompare = b.target_date.localeCompare(a.target_date);
-      if (dateCompare !== 0) {
-        return dateCompare;
-      }
-      return (a.run_time ?? "99:99").localeCompare(b.run_time ?? "99:99");
-    });
+    const sorted = [...exceptions]
+      .filter((item) => exceptionManageDay === null || getKoreanWeekday(item.target_date) === exceptionManageDay)
+      .sort((a, b) => {
+        const dateCompare = b.target_date.localeCompare(a.target_date);
+        if (dateCompare !== 0) {
+          return dateCompare;
+        }
+        return (a.run_time ?? "99:99").localeCompare(b.run_time ?? "99:99");
+      });
 
     if (!keyword) {
       return sorted;
@@ -101,7 +106,7 @@ export function AdminPanel() {
         .filter(Boolean)
         .some((value) => value?.toLocaleLowerCase("ko-KR").includes(keyword)),
     );
-  }, [exceptionFilter, exceptions]);
+  }, [exceptionFilter, exceptionManageDay, exceptions]);
 
   useEffect(() => {
     void loadAdminData();
@@ -386,6 +391,7 @@ export function AdminPanel() {
           </Panel>
 
           <Panel title="반복 스케줄 관리">
+            <ManageDayTabs selectedDay={scheduleManageDay} onSelect={setScheduleManageDay} />
             <Input value={scheduleFilter} onChange={setScheduleFilter} placeholder="학생/위치 검색" />
             <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto pr-1">
               {filteredSchedules.length === 0 ? (
@@ -405,6 +411,7 @@ export function AdminPanel() {
           </Panel>
 
           <Panel title="예외 일정 관리">
+            <ManageDayTabs selectedDay={exceptionManageDay} onSelect={setExceptionManageDay} />
             <Input value={exceptionFilter} onChange={setExceptionFilter} placeholder="학생/위치/날짜 검색" />
             <div className="mt-3 max-h-[360px] space-y-2 overflow-y-auto pr-1">
               {filteredExceptions.length === 0 ? (
@@ -422,6 +429,11 @@ export function AdminPanel() {
       </div>
     </main>
   );
+}
+
+function getKoreanWeekday(date: string) {
+  const day = new Date(`${date}T00:00:00`).getDay();
+  return day === 0 ? 7 : day;
 }
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
@@ -451,6 +463,40 @@ function DayPicker({
             selectedDays.includes(day.value)
               ? "bg-emerald-700 text-white"
               : "bg-emerald-50 text-emerald-900"
+          }`}
+        >
+          {day.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ManageDayTabs({
+  selectedDay,
+  onSelect,
+}: {
+  selectedDay: number | null;
+  onSelect: (day: number | null) => void;
+}) {
+  return (
+    <div className="mb-3 grid grid-cols-6 gap-1.5">
+      <button
+        type="button"
+        onClick={() => onSelect(null)}
+        className={`h-9 rounded-lg text-xs font-black ${
+          selectedDay === null ? "bg-emerald-700 text-white" : "bg-emerald-50 text-emerald-900"
+        }`}
+      >
+        전체
+      </button>
+      {DAYS.map((day) => (
+        <button
+          key={day.value}
+          type="button"
+          onClick={() => onSelect(day.value)}
+          className={`h-9 rounded-lg text-xs font-black ${
+            selectedDay === day.value ? "bg-emerald-700 text-white" : "bg-emerald-50 text-emerald-900"
           }`}
         >
           {day.label}
