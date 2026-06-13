@@ -2,20 +2,19 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { getSupabase } from "@/lib/supabase";
 import { DAYS, formatTime, TYPE_LABEL } from "@/lib/schedule";
+import { getSupabase } from "@/lib/supabase";
 import type { ExceptionType, ScheduleException, ScheduleType, Student, WeeklySchedule } from "@/lib/types";
 
-const SCHEDULE_TYPES: { value: ScheduleType; label: string }[] = [
+const SCHEDULE_TYPES: { value: Exclude<ScheduleType, "MOVE">; label: string }[] = [
   { value: "PICKUP", label: "픽업" },
   { value: "DROP", label: "드랍" },
-  { value: "MOVE", label: "이동" },
 ];
 
 const EXCEPTION_TYPES: { value: ExceptionType; label: string }[] = [
+  { value: "ADD", label: "추가" },
   { value: "CHANGE", label: "변경" },
   { value: "CANCEL", label: "취소" },
-  { value: "ADD", label: "추가" },
 ];
 
 export function AdminPanel() {
@@ -23,28 +22,104 @@ export function AdminPanel() {
   const [weeklySchedules, setWeeklySchedules] = useState<WeeklySchedule[]>([]);
   const [exceptions, setExceptions] = useState<ScheduleException[]>([]);
   const [studentName, setStudentName] = useState("");
-  const [studentMemo, setStudentMemo] = useState("");
   const [scheduleStudentId, setScheduleStudentId] = useState("");
-  const [dayOfWeek, setDayOfWeek] = useState(1);
+  const [selectedDays, setSelectedDays] = useState<number[]>([1]);
   const [runTime, setRunTime] = useState("15:20");
-  const [scheduleType, setScheduleType] = useState<ScheduleType>("PICKUP");
+  const [scheduleType, setScheduleType] = useState<Exclude<ScheduleType, "MOVE">>("PICKUP");
   const [location, setLocation] = useState("");
   const [exceptionType, setExceptionType] = useState<ExceptionType>("ADD");
   const [exceptionStudentId, setExceptionStudentId] = useState("");
   const [exceptionWeeklyId, setExceptionWeeklyId] = useState("");
   const [exceptionDate, setExceptionDate] = useState("");
   const [exceptionTime, setExceptionTime] = useState("15:20");
-  const [exceptionScheduleType, setExceptionScheduleType] = useState<ScheduleType>("PICKUP");
+  const [exceptionScheduleType, setExceptionScheduleType] = useState<Exclude<ScheduleType, "MOVE">>("PICKUP");
   const [exceptionLocation, setExceptionLocation] = useState("");
   const [exceptionMemo, setExceptionMemo] = useState("");
+  const [scheduleFilter, setScheduleFilter] = useState("");
+  const [exceptionFilter, setExceptionFilter] = useState("");
   const [message, setMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
-  const activeStudents = useMemo(() => students.filter((student) => student.is_active), [students]);
+  const activeStudents = useMemo(
+    () => students.filter((student) => student.is_active).sort((a, b) => a.name.localeCompare(b.name, "ko")),
+    [students],
+  );
+
+  const locations = useMemo(() => {
+    const values = [...weeklySchedules, ...exceptions]
+      .map((item) => item.location)
+      .filter((value): value is string => Boolean(value?.trim()));
+    return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, "ko"));
+  }, [weeklySchedules, exceptions]);
+
+  const filteredSchedules = useMemo(() => {
+    const keyword = scheduleFilter.trim().toLocaleLowerCase("ko-KR");
+    const schedules = weeklySchedules
+      .filter((schedule) => schedule.schedule_type !== "MOVE")
+      .sort((a, b) => {
+        if (a.day_of_week !== b.day_of_week) {
+          return a.day_of_week - b.day_of_week;
+        }
+        const timeCompare = formatTime(a.run_time).localeCompare(formatTime(b.run_time));
+        if (timeCompare !== 0) {
+          return timeCompare;
+        }
+        const locationCompare = a.location.localeCompare(b.location, "ko");
+        if (locationCompare !== 0) {
+          return locationCompare;
+        }
+        return (a.students?.name ?? "").localeCompare(b.students?.name ?? "", "ko");
+      });
+
+    if (!keyword) {
+      return schedules;
+    }
+
+    return schedules.filter((schedule) =>
+      [schedule.students?.name, schedule.location, TYPE_LABEL[schedule.schedule_type]]
+        .filter(Boolean)
+        .some((value) => value?.toLocaleLowerCase("ko-KR").includes(keyword)),
+    );
+  }, [scheduleFilter, weeklySchedules]);
+
+  const filteredExceptions = useMemo(() => {
+    const keyword = exceptionFilter.trim().toLocaleLowerCase("ko-KR");
+    const sorted = [...exceptions].sort((a, b) => {
+      const dateCompare = b.target_date.localeCompare(a.target_date);
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+      return (a.run_time ?? "99:99").localeCompare(b.run_time ?? "99:99");
+    });
+
+    if (!keyword) {
+      return sorted;
+    }
+
+    return sorted.filter((item) =>
+      [item.students?.name, item.location, item.memo, item.target_date]
+        .filter(Boolean)
+        .some((value) => value?.toLocaleLowerCase("ko-KR").includes(keyword)),
+    );
+  }, [exceptionFilter, exceptions]);
 
   useEffect(() => {
     void loadAdminData();
   }, []);
+
+  function selectExceptionWeeklySchedule(scheduleId: string) {
+    setExceptionWeeklyId(scheduleId);
+
+    const selectedSchedule = weeklySchedules.find((schedule) => schedule.id === scheduleId);
+    if (!selectedSchedule) {
+      return;
+    }
+
+    setExceptionStudentId(selectedSchedule.student_id ?? "");
+    setExceptionTime(formatTime(selectedSchedule.run_time));
+    setExceptionScheduleType(selectedSchedule.schedule_type === "DROP" ? "DROP" : "PICKUP");
+    setExceptionLocation(selectedSchedule.location);
+  }
 
   async function loadAdminData() {
     const supabase = getSupabase();
@@ -86,62 +161,62 @@ export function AdminPanel() {
     setIsSaving(true);
     const { error } = await getSupabase().from("students").insert({
       name: studentName.trim(),
-      memo: studentMemo.trim() || null,
+      memo: null,
       is_active: true,
     });
-
     setIsSaving(false);
+
     if (error) {
       setMessage(error.message);
       return;
     }
 
     setStudentName("");
-    setStudentMemo("");
     setMessage("학생을 등록했습니다.");
     void loadAdminData();
   }
 
   async function addWeeklySchedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!location.trim() || !runTime) {
-      return;
-    }
 
-    if (scheduleType !== "MOVE" && !scheduleStudentId) {
-      setMessage("픽업/드랍은 학생을 선택해야 합니다.");
+    if (!scheduleStudentId || !location.trim() || !runTime || selectedDays.length === 0) {
+      setMessage("학생, 요일, 시간, 위치를 모두 입력해 주세요.");
       return;
     }
 
     setIsSaving(true);
-    const { error } = await getSupabase().from("weekly_schedules").insert({
-      student_id: scheduleType === "MOVE" ? null : scheduleStudentId,
-      day_of_week: dayOfWeek,
-      run_time: runTime,
-      schedule_type: scheduleType,
-      location: location.trim(),
-      is_active: true,
-    });
-
+    const { error } = await getSupabase().from("weekly_schedules").insert(
+      selectedDays.map((day) => ({
+        student_id: scheduleStudentId,
+        day_of_week: day,
+        run_time: runTime,
+        schedule_type: scheduleType,
+        location: location.trim(),
+        is_active: true,
+      })),
+    );
     setIsSaving(false);
+
     if (error) {
       setMessage(error.message);
       return;
     }
 
     setLocation("");
-    setMessage("반복 스케줄을 등록했습니다.");
+    setMessage(`${selectedDays.length}개 요일에 반복 스케줄을 등록했습니다.`);
     void loadAdminData();
   }
 
   async function addException(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     if (!exceptionDate) {
+      setMessage("예외 날짜를 선택해 주세요.");
       return;
     }
 
     const payload = {
-      student_id: exceptionScheduleType === "MOVE" ? null : exceptionStudentId || null,
+      student_id: exceptionType === "CANCEL" ? exceptionStudentId || null : exceptionStudentId || null,
       weekly_schedule_id: exceptionWeeklyId || null,
       target_date: exceptionDate,
       run_time: exceptionType === "CANCEL" ? null : exceptionTime,
@@ -151,13 +226,13 @@ export function AdminPanel() {
       memo: exceptionMemo.trim() || null,
     };
 
-    if (exceptionType !== "CANCEL" && !payload.location) {
-      setMessage("변경/추가 일정은 위치가 필요합니다.");
+    if (exceptionType !== "CANCEL" && (!payload.student_id || !payload.location || !exceptionTime)) {
+      setMessage("변경/추가 예외는 학생, 시간, 위치가 필요합니다.");
       return;
     }
 
-    if (exceptionType !== "CANCEL" && exceptionScheduleType !== "MOVE" && !payload.student_id) {
-      setMessage("변경/추가 픽업/드랍은 학생을 선택해야 합니다.");
+    if (exceptionType === "CANCEL" && !payload.weekly_schedule_id && !payload.student_id) {
+      setMessage("취소 예외는 기본 일정 또는 학생을 선택해 주세요.");
       return;
     }
 
@@ -170,29 +245,8 @@ export function AdminPanel() {
       return;
     }
 
-    setExceptionLocation("");
     setExceptionMemo("");
     setMessage("예외 일정을 등록했습니다.");
-    void loadAdminData();
-  }
-
-  async function updateWeeklySchedule(schedule: WeeklySchedule, changes: Partial<WeeklySchedule>) {
-    const nextType = changes.schedule_type ?? schedule.schedule_type;
-    const nextStudentId = nextType === "MOVE" ? null : changes.student_id ?? schedule.student_id;
-
-    const { error } = await getSupabase()
-      .from("weekly_schedules")
-      .update({
-        ...changes,
-        student_id: nextStudentId,
-      })
-      .eq("id", schedule.id);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
     void loadAdminData();
   }
 
@@ -212,6 +266,14 @@ export function AdminPanel() {
       return;
     }
     void loadAdminData();
+  }
+
+  function toggleDay(day: number) {
+    setSelectedDays((current) =>
+      current.includes(day)
+        ? current.filter((value) => value !== day)
+        : [...current, day].sort((a, b) => a - b),
+    );
   }
 
   return (
@@ -239,191 +301,119 @@ export function AdminPanel() {
           <Panel title="학생 등록">
             <form onSubmit={addStudent} className="space-y-3">
               <Input value={studentName} onChange={setStudentName} placeholder="학생 이름" />
-              <Input value={studentMemo} onChange={setStudentMemo} placeholder="메모" />
               <SubmitButton disabled={isSaving}>학생 등록</SubmitButton>
             </form>
           </Panel>
 
           <Panel title="반복 스케줄 등록">
             <form onSubmit={addWeeklySchedule} className="space-y-3">
-              <Select value={scheduleType} onChange={(value) => setScheduleType(value as ScheduleType)}>
-                {SCHEDULE_TYPES.map((type) => (
-                  <option key={type.value} value={type.value}>
-                    {type.label}
-                  </option>
-                ))}
-              </Select>
-              {scheduleType !== "MOVE" ? (
-                <Select value={scheduleStudentId} onChange={setScheduleStudentId}>
-                  <option value="">학생 선택</option>
-                  {activeStudents.map((student) => (
-                    <option key={student.id} value={student.id}>
-                      {student.name}
-                    </option>
-                  ))}
-                </Select>
-              ) : null}
               <div className="grid grid-cols-2 gap-2">
-                <Select value={`${dayOfWeek}`} onChange={(value) => setDayOfWeek(Number(value))}>
-                  {DAYS.map((day) => (
-                    <option key={day.value} value={day.value}>
-                      {day.label}요일
+                <Select value={scheduleType} onChange={(value) => setScheduleType(value as Exclude<ScheduleType, "MOVE">)}>
+                  {SCHEDULE_TYPES.map((type) => (
+                    <option key={type.value} value={type.value}>
+                      {type.label}
                     </option>
                   ))}
                 </Select>
                 <Input type="time" value={runTime} onChange={setRunTime} placeholder="시간" />
               </div>
-              <Input value={location} onChange={setLocation} placeholder="위치" />
+              <Select value={scheduleStudentId} onChange={setScheduleStudentId}>
+                <option value="">학생 선택</option>
+                {activeStudents.map((student) => (
+                  <option key={student.id} value={student.id}>
+                    {student.name}
+                  </option>
+                ))}
+              </Select>
+              <DayPicker selectedDays={selectedDays} onToggle={toggleDay} />
+              <LocationInput value={location} onChange={setLocation} locations={locations} />
               <SubmitButton disabled={isSaving}>스케줄 등록</SubmitButton>
             </form>
           </Panel>
 
           <Panel title="이번 주 예외 등록">
             <form onSubmit={addException} className="space-y-3">
-              <Select value={exceptionType} onChange={(value) => setExceptionType(value as ExceptionType)}>
-                {EXCEPTION_TYPES.map((type) => (
-                  <option key={type.value} value={type.value}>
-                    {type.label}
-                  </option>
-                ))}
-              </Select>
-              <Input type="date" value={exceptionDate} onChange={setExceptionDate} placeholder="날짜" />
-              <Select value={exceptionWeeklyId} onChange={setExceptionWeeklyId}>
-                <option value="">기본 일정 연결 없음</option>
-                {weeklySchedules.map((schedule) => (
-                  <option key={schedule.id} value={schedule.id}>
-                    {DAYS.find((day) => day.value === schedule.day_of_week)?.label} {formatTime(schedule.run_time)}{" "}
-                    {TYPE_LABEL[schedule.schedule_type]} {schedule.students?.name ?? "이동"}
-                  </option>
-                ))}
+              <div className="grid grid-cols-2 gap-2">
+                <Select value={exceptionType} onChange={(value) => setExceptionType(value as ExceptionType)}>
+                  {EXCEPTION_TYPES.map((type) => (
+                    <option key={type.value} value={type.value}>
+                      {type.label}
+                    </option>
+                  ))}
+                </Select>
+                <Input type="date" value={exceptionDate} onChange={setExceptionDate} placeholder="날짜" />
+              </div>
+              <Select value={exceptionWeeklyId} onChange={selectExceptionWeeklySchedule}>
+                <option value="">기본 일정 선택</option>
+                {weeklySchedules
+                  .filter((schedule) => schedule.schedule_type !== "MOVE")
+                  .map((schedule) => (
+                    <option key={schedule.id} value={schedule.id}>
+                      {DAYS.find((day) => day.value === schedule.day_of_week)?.label} {formatTime(schedule.run_time)}{" "}
+                      {TYPE_LABEL[schedule.schedule_type]} {schedule.students?.name ?? ""}
+                    </option>
+                  ))}
               </Select>
               {exceptionType !== "CANCEL" ? (
                 <>
-                  <Select
-                    value={exceptionScheduleType}
-                    onChange={(value) => setExceptionScheduleType(value as ScheduleType)}
-                  >
-                    {SCHEDULE_TYPES.map((type) => (
-                      <option key={type.value} value={type.value}>
-                        {type.label}
-                      </option>
-                    ))}
-                  </Select>
-                  {exceptionScheduleType !== "MOVE" ? (
-                    <Select value={exceptionStudentId} onChange={setExceptionStudentId}>
-                      <option value="">학생 선택</option>
-                      {activeStudents.map((student) => (
-                        <option key={student.id} value={student.id}>
-                          {student.name}
+                  <div className="grid grid-cols-2 gap-2">
+                    <Select
+                      value={exceptionScheduleType}
+                      onChange={(value) => setExceptionScheduleType(value as Exclude<ScheduleType, "MOVE">)}
+                    >
+                      {SCHEDULE_TYPES.map((type) => (
+                        <option key={type.value} value={type.value}>
+                          {type.label}
                         </option>
                       ))}
                     </Select>
-                  ) : null}
-                  <div className="grid grid-cols-2 gap-2">
                     <Input type="time" value={exceptionTime} onChange={setExceptionTime} placeholder="시간" />
-                    <Input value={exceptionLocation} onChange={setExceptionLocation} placeholder="위치" />
                   </div>
+                  <Select value={exceptionStudentId} onChange={setExceptionStudentId}>
+                    <option value="">학생 선택</option>
+                    {activeStudents.map((student) => (
+                      <option key={student.id} value={student.id}>
+                        {student.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <LocationInput value={exceptionLocation} onChange={setExceptionLocation} locations={locations} />
                 </>
               ) : null}
-              <Input value={exceptionMemo} onChange={setExceptionMemo} placeholder="메모" />
+              <Input value={exceptionMemo} onChange={setExceptionMemo} placeholder="예외 메모" />
               <SubmitButton disabled={isSaving}>예외 등록</SubmitButton>
             </form>
           </Panel>
 
           <Panel title="반복 스케줄 관리">
-            <div className="space-y-3">
-              {weeklySchedules.length === 0 ? (
-                <p className="text-sm font-medium text-stone-500">등록된 반복 스케줄이 없습니다.</p>
+            <Input value={scheduleFilter} onChange={setScheduleFilter} placeholder="학생/위치 검색" />
+            <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto pr-1">
+              {filteredSchedules.length === 0 ? (
+                <p className="rounded-lg bg-stone-50 px-3 py-4 text-sm font-medium text-stone-500">
+                  등록된 반복 스케줄이 없습니다.
+                </p>
               ) : (
-                weeklySchedules.map((schedule) => (
-                  <div key={schedule.id} className="rounded-lg border border-stone-200 bg-stone-50 p-3">
-                    <div className="mb-3 text-sm font-black text-stone-900">
-                      {DAYS.find((day) => day.value === schedule.day_of_week)?.label} {formatTime(schedule.run_time)} ·{" "}
-                      {TYPE_LABEL[schedule.schedule_type]} · {schedule.students?.name ?? "이동"}
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Input
-                        type="time"
-                        value={formatTime(schedule.run_time)}
-                        onChange={(value) => updateWeeklySchedule(schedule, { run_time: value })}
-                        placeholder="시간"
-                      />
-                      <Select
-                        value={`${schedule.day_of_week}`}
-                        onChange={(value) => updateWeeklySchedule(schedule, { day_of_week: Number(value) })}
-                      >
-                        {DAYS.map((day) => (
-                          <option key={day.value} value={day.value}>
-                            {day.label}
-                          </option>
-                        ))}
-                      </Select>
-                    </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2">
-                      <Select
-                        value={schedule.schedule_type}
-                        onChange={(value) => updateWeeklySchedule(schedule, { schedule_type: value as ScheduleType })}
-                      >
-                        {SCHEDULE_TYPES.map((type) => (
-                          <option key={type.value} value={type.value}>
-                            {type.label}
-                          </option>
-                        ))}
-                      </Select>
-                      <button
-                        type="button"
-                        onClick={() => updateWeeklySchedule(schedule, { is_active: !schedule.is_active })}
-                        className={`h-11 rounded-lg text-sm font-bold ${
-                          schedule.is_active ? "bg-emerald-700 text-white" : "bg-stone-200 text-stone-600"
-                        }`}
-                      >
-                        {schedule.is_active ? "활성" : "비활성"}
-                      </button>
-                    </div>
-                    <div className="mt-2">
-                      <Input
-                        value={schedule.location}
-                        onChange={(value) => updateWeeklySchedule(schedule, { location: value })}
-                        placeholder="위치"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => deleteWeeklySchedule(schedule.id)}
-                      className="mt-2 h-10 w-full rounded-lg bg-red-50 text-sm font-bold text-red-700"
-                    >
-                      삭제
-                    </button>
-                  </div>
+                filteredSchedules.map((schedule) => (
+                  <CompactScheduleRow
+                    key={schedule.id}
+                    schedule={schedule}
+                    onDelete={() => deleteWeeklySchedule(schedule.id)}
+                  />
                 ))
               )}
             </div>
           </Panel>
 
           <Panel title="예외 일정 관리">
-            <div className="space-y-2">
-              {exceptions.length === 0 ? (
-                <p className="text-sm font-medium text-stone-500">최근 예외 일정이 없습니다.</p>
+            <Input value={exceptionFilter} onChange={setExceptionFilter} placeholder="학생/위치/날짜 검색" />
+            <div className="mt-3 max-h-[360px] space-y-2 overflow-y-auto pr-1">
+              {filteredExceptions.length === 0 ? (
+                <p className="rounded-lg bg-stone-50 px-3 py-4 text-sm font-medium text-stone-500">
+                  최근 예외 일정이 없습니다.
+                </p>
               ) : (
-                exceptions.map((item) => (
-                  <div key={item.id} className="rounded-lg border border-stone-200 bg-stone-50 p-3">
-                    <div className="text-sm font-black text-stone-900">
-                      {item.target_date} · {EXCEPTION_TYPES.find((type) => type.value === item.exception_type)?.label}
-                    </div>
-                    <p className="mt-1 text-sm font-medium text-stone-600">
-                      {item.run_time ? `${formatTime(item.run_time)} · ` : ""}
-                      {item.schedule_type ? `${TYPE_LABEL[item.schedule_type]} · ` : ""}
-                      {item.students?.name ?? (item.schedule_type === "MOVE" ? "이동" : "학생 없음")}
-                      {item.location ? ` · ${item.location}` : ""}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => deleteException(item.id)}
-                      className="mt-2 h-10 w-full rounded-lg bg-red-50 text-sm font-bold text-red-700"
-                    >
-                      삭제
-                    </button>
-                  </div>
+                filteredExceptions.map((item) => (
+                  <CompactExceptionRow key={item.id} item={item} onDelete={() => deleteException(item.id)} />
                 ))
               )}
             </div>
@@ -440,6 +430,118 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
       <h2 className="mb-3 text-lg font-black text-emerald-900">{title}</h2>
       {children}
     </section>
+  );
+}
+
+function DayPicker({
+  selectedDays,
+  onToggle,
+}: {
+  selectedDays: number[];
+  onToggle: (day: number) => void;
+}) {
+  return (
+    <div className="grid grid-cols-5 gap-1.5">
+      {DAYS.map((day) => (
+        <button
+          key={day.value}
+          type="button"
+          onClick={() => onToggle(day.value)}
+          className={`h-10 rounded-lg text-sm font-black ${
+            selectedDays.includes(day.value)
+              ? "bg-emerald-700 text-white"
+              : "bg-emerald-50 text-emerald-900"
+          }`}
+        >
+          {day.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function CompactScheduleRow({
+  schedule,
+  onDelete,
+}: {
+  schedule: WeeklySchedule;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-black text-stone-900">
+          {DAYS.find((day) => day.value === schedule.day_of_week)?.label} {formatTime(schedule.run_time)} ·{" "}
+          {TYPE_LABEL[schedule.schedule_type]} · {schedule.students?.name ?? "학생 없음"}
+        </div>
+        <p className="truncate text-xs font-medium text-stone-500">{schedule.location}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onDelete}
+        className="h-9 shrink-0 rounded-lg bg-red-50 px-3 text-xs font-black text-red-700"
+      >
+        삭제
+      </button>
+    </div>
+  );
+}
+
+function CompactExceptionRow({
+  item,
+  onDelete,
+}: {
+  item: ScheduleException;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-black text-stone-900">
+          {item.target_date} · {EXCEPTION_TYPES.find((type) => type.value === item.exception_type)?.label}
+        </div>
+        <p className="truncate text-xs font-medium text-stone-500">
+          {item.run_time ? `${formatTime(item.run_time)} · ` : ""}
+          {item.schedule_type ? `${TYPE_LABEL[item.schedule_type]} · ` : ""}
+          {item.students?.name ?? "학생 없음"}
+          {item.location ? ` · ${item.location}` : ""}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onDelete}
+        className="h-9 shrink-0 rounded-lg bg-red-50 px-3 text-xs font-black text-red-700"
+      >
+        삭제
+      </button>
+    </div>
+  );
+}
+
+function LocationInput({
+  value,
+  onChange,
+  locations,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  locations: string[];
+}) {
+  return (
+    <>
+      <input
+        list="location-options"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="위치 입력 또는 선택"
+        className="h-11 w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-medium outline-none focus:border-emerald-600 focus:bg-white focus:ring-2 focus:ring-emerald-100"
+      />
+      <datalist id="location-options">
+        {locations.map((item) => (
+          <option key={item} value={item} />
+        ))}
+      </datalist>
+    </>
   );
 }
 

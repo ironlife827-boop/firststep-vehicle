@@ -77,6 +77,7 @@ export function buildScheduleItems(
   );
 
   const weeklyItems: ScheduleItem[] = weeklySchedules
+    .filter((item) => item.schedule_type !== "MOVE")
     .filter((item) => !canceledWeeklyIds.has(item.id) && !changedWeeklyIds.has(item.id))
     .map((item) => ({
       id: item.id,
@@ -97,6 +98,7 @@ export function buildScheduleItems(
       (item.exception_type !== "CHANGE" && item.exception_type !== "ADD") ||
       !item.run_time ||
       !item.schedule_type ||
+      item.schedule_type === "MOVE" ||
       !item.location
     ) {
       return [];
@@ -124,7 +126,11 @@ export function buildScheduleItems(
     if (timeCompare !== 0) {
       return timeCompare;
     }
-    return a.location.localeCompare(b.location, "ko");
+    const locationCompare = a.location.localeCompare(b.location, "ko");
+    if (locationCompare !== 0) {
+      return locationCompare;
+    }
+    return (a.student_name ?? "").localeCompare(b.student_name ?? "", "ko");
   });
 }
 
@@ -160,7 +166,28 @@ export function groupScheduleItems(items: ScheduleItem[]) {
     });
   }
 
-  return Array.from(groupMap.values());
+  return Array.from(groupMap.values()).map((group) => ({
+    ...group,
+    items: [...group.items].sort((a, b) =>
+      (a.student_name ?? "").localeCompare(b.student_name ?? "", "ko"),
+    ),
+  }));
+}
+
+export function isPastScheduleTime(targetDate: string, runTime: string) {
+  const now = new Date();
+  const today = formatDate(now);
+
+  if (targetDate < today) {
+    return true;
+  }
+
+  if (targetDate > today) {
+    return false;
+  }
+
+  const [hour, minute] = formatTime(runTime).split(":").map(Number);
+  return hour * 60 + minute < now.getHours() * 60 + now.getMinutes();
 }
 
 export function statusKey(

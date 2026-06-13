@@ -14,6 +14,7 @@ import {
   getDateForWeekday,
   getTodayDayOfWeek,
   groupScheduleItems,
+  isPastScheduleTime,
   statusKey,
   TYPE_LABEL,
 } from "@/lib/schedule";
@@ -38,6 +39,7 @@ export function ScheduleBoard() {
   const [exceptions, setExceptions] = useState<ScheduleException[]>([]);
   const [statuses, setStatuses] = useState<DailyScheduleStatus[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [showPastSchedules, setShowPastSchedules] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -48,6 +50,16 @@ export function ScheduleBoard() {
     const items = buildScheduleItems(weeklySchedules, exceptions, targetDate);
     return groupScheduleItems(filterItems(items, searchTerm));
   }, [weeklySchedules, exceptions, targetDate, searchTerm]);
+
+  const pastGroups = useMemo(
+    () => groups.filter((group) => isPastScheduleTime(targetDate, group.run_time)),
+    [groups, targetDate],
+  );
+
+  const visibleGroups = useMemo(
+    () => (showPastSchedules ? groups : groups.filter((group) => !isPastScheduleTime(targetDate, group.run_time))),
+    [groups, showPastSchedules, targetDate],
+  );
 
   const loadSchedule = useCallback(async () => {
     setIsLoading(true);
@@ -60,6 +72,7 @@ export function ScheduleBoard() {
         .select("id, student_id, day_of_week, run_time, schedule_type, location, is_active, students(id, name, memo, is_active)")
         .eq("day_of_week", selectedDay)
         .eq("is_active", true)
+        .neq("schedule_type", "MOVE")
         .order("run_time", { ascending: true }),
       supabase
         .from("schedule_exceptions")
@@ -256,16 +269,34 @@ export function ScheduleBoard() {
               표시할 스케줄이 없습니다.
             </div>
           ) : (
-            groups.map((group) => (
-              <ScheduleCard
-                key={group.key}
-                group={group}
-                isExpanded={expandedGroups.has(group.key)}
-                statusMap={statusMap}
-                onToggleGroup={toggleGroup}
-                onToggleDone={toggleDone}
-              />
-            ))
+            <>
+              {pastGroups.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setShowPastSchedules((value) => !value)}
+                  className="h-11 w-full rounded-lg border border-emerald-200 bg-emerald-50 text-sm font-black text-emerald-800"
+                >
+                  {showPastSchedules ? "지난 일정 숨기기" : `지난 일정 보기 ${pastGroups.length}개`}
+                </button>
+              ) : null}
+
+              {visibleGroups.length === 0 ? (
+                <div className="rounded-lg border border-stone-200 bg-stone-50 px-4 py-8 text-center text-sm font-medium text-stone-500">
+                  남은 스케줄이 없습니다.
+                </div>
+              ) : (
+                visibleGroups.map((group) => (
+                  <ScheduleCard
+                    key={group.key}
+                    group={group}
+                    isExpanded={expandedGroups.has(group.key)}
+                    statusMap={statusMap}
+                    onToggleGroup={toggleGroup}
+                    onToggleDone={toggleDone}
+                  />
+                ))
+              )}
+            </>
           )}
         </section>
       </div>
