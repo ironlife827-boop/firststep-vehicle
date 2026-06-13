@@ -266,15 +266,27 @@ export function AdminPanel() {
     }
 
     const normalizedLocation = location.trim();
-    const duplicateSchedules = weeklySchedules.filter(
-      (schedule) =>
-        schedule.is_active &&
-        scheduleStudentIds.includes(schedule.student_id ?? "") &&
-        selectedDays.includes(schedule.day_of_week) &&
-        formatTime(schedule.run_time) === runTime &&
-        schedule.schedule_type === scheduleType &&
-        schedule.location.trim().toLocaleLowerCase("ko-KR") === normalizedLocation.toLocaleLowerCase("ko-KR"),
+    const scheduleRows = scheduleStudentIds.flatMap((studentId) =>
+      selectedDays.map((day) => ({
+        student_id: studentId,
+        day_of_week: day,
+        run_time: runTime,
+        schedule_type: scheduleType,
+        location: normalizedLocation,
+        is_active: true,
+      })),
     );
+    const findDuplicateSchedules = (row: (typeof scheduleRows)[number]) =>
+      weeklySchedules.filter(
+        (schedule) =>
+          schedule.is_active &&
+          schedule.student_id === row.student_id &&
+          schedule.day_of_week === row.day_of_week &&
+          formatTime(schedule.run_time) === row.run_time &&
+          schedule.schedule_type === row.schedule_type &&
+          schedule.location.trim().toLocaleLowerCase("ko-KR") === row.location.toLocaleLowerCase("ko-KR"),
+      );
+    const duplicateSchedules = scheduleRows.flatMap((row) => findDuplicateSchedules(row));
 
     if (duplicateSchedules.length > 0) {
       const duplicateNames = Array.from(
@@ -285,7 +297,7 @@ export function AdminPanel() {
         !window.confirm(
           `같은 반복 스케줄이 이미 ${duplicateSchedules.length}개 있습니다.\n${
             duplicateNames ? `학생: ${duplicateNames}\n` : ""
-          }그래도 등록할까요?`,
+          }중복된 일정은 새로 만들지 않고 기존 일정에 덮어쓸까요?`,
         )
       ) {
         return;
@@ -293,27 +305,44 @@ export function AdminPanel() {
     }
 
     setIsSaving(true);
-    const { error } = await getSupabase().from("weekly_schedules").insert(
-      scheduleStudentIds.flatMap((studentId) =>
-        selectedDays.map((day) => ({
-          student_id: studentId,
-          day_of_week: day,
-          run_time: runTime,
-          schedule_type: scheduleType,
-          location: normalizedLocation,
-          is_active: true,
-        })),
-      ),
+    const supabase = getSupabase();
+    const rowsToInsert = scheduleRows.filter((row) => findDuplicateSchedules(row).length === 0);
+    const rowsToUpdate = scheduleRows.flatMap((row) =>
+      findDuplicateSchedules(row).map((schedule) => ({
+        id: schedule.id,
+        row,
+      })),
     );
+    const [insertResult, updateResults] = await Promise.all([
+      rowsToInsert.length > 0
+        ? supabase.from("weekly_schedules").insert(rowsToInsert)
+        : Promise.resolve({ error: null }),
+      Promise.all(
+        rowsToUpdate.map(({ id, row }) =>
+          supabase
+            .from("weekly_schedules")
+            .update({
+              student_id: row.student_id,
+              day_of_week: row.day_of_week,
+              run_time: row.run_time,
+              schedule_type: row.schedule_type,
+              location: row.location,
+              is_active: true,
+            })
+            .eq("id", id),
+        ),
+      ),
+    ]);
     setIsSaving(false);
 
-    if (error) {
-      setMessage(error.message);
+    const updateError = updateResults.find((result) => result.error)?.error;
+    if (insertResult.error || updateError) {
+      setMessage(insertResult.error?.message ?? updateError?.message ?? "반복 스케줄을 저장하지 못했습니다.");
       return;
     }
 
     setLocation("");
-    setMessage(`${scheduleStudentIds.length}명, ${selectedDays.length}개 요일에 반복 스케줄을 등록했습니다.`);
+    setMessage(`반복 스케줄을 저장했습니다. 새로 등록 ${rowsToInsert.length}개, 덮어쓰기 ${rowsToUpdate.length}개`);
     void loadAdminData();
   }
 
