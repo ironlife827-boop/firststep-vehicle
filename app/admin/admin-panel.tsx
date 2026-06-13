@@ -3,9 +3,9 @@
 import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { ACADEMY_DROP_LOCATION, DAYS, formatTime, TYPE_LABEL } from "@/lib/schedule";
+import { ACADEMY_DROP_LOCATION, DAYS, formatDoneTime, formatTime, TYPE_LABEL } from "@/lib/schedule";
 import { getSupabase } from "@/lib/supabase";
-import type { ExceptionType, ScheduleException, ScheduleType, Student, WeeklySchedule } from "@/lib/types";
+import type { DailyScheduleStatus, ExceptionType, ScheduleException, ScheduleType, Student, WeeklySchedule } from "@/lib/types";
 
 type WeeklyScheduleGroup = {
   key: string;
@@ -14,6 +14,12 @@ type WeeklyScheduleGroup = {
   schedule_type: ScheduleType;
   location: string;
   schedules: WeeklySchedule[];
+};
+
+type CheckLog = DailyScheduleStatus & {
+  students?: Pick<Student, "id" | "name"> | null;
+  weekly_schedules?: Pick<WeeklySchedule, "run_time" | "schedule_type" | "location"> | null;
+  schedule_exceptions?: Pick<ScheduleException, "run_time" | "schedule_type" | "location" | "exception_type"> | null;
 };
 
 const SCHEDULE_TYPES: { value: Exclude<ScheduleType, "MOVE">; label: string }[] = [
@@ -31,6 +37,7 @@ export function AdminPanel() {
   const [students, setStudents] = useState<Student[]>([]);
   const [weeklySchedules, setWeeklySchedules] = useState<WeeklySchedule[]>([]);
   const [exceptions, setExceptions] = useState<ScheduleException[]>([]);
+  const [checkLogs, setCheckLogs] = useState<CheckLog[]>([]);
   const [allExceptionLocations, setAllExceptionLocations] = useState<string[]>([]);
   const [studentName, setStudentName] = useState("");
   const [studentFilter, setStudentFilter] = useState("");
@@ -199,7 +206,7 @@ export function AdminPanel() {
 
   async function loadAdminData() {
     const supabase = getSupabase();
-    const [studentsResult, weeklyResult, exceptionsResult, allExceptionLocationsResult] = await Promise.all([
+    const [studentsResult, weeklyResult, exceptionsResult, allExceptionLocationsResult, checkLogsResult] = await Promise.all([
       supabase.from("students").select("id, name, memo, is_active").order("name"),
       supabase
         .from("weekly_schedules")
@@ -212,13 +219,28 @@ export function AdminPanel() {
         .gte("target_date", new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString().slice(0, 10))
         .order("target_date", { ascending: false }),
       supabase.from("schedule_exceptions").select("location"),
+      supabase
+        .from("daily_schedule_status")
+        .select(
+          "id, weekly_schedule_id, schedule_exception_id, target_date, student_id, is_done, done_at, students(id, name), weekly_schedules(run_time, schedule_type, location), schedule_exceptions(run_time, schedule_type, location, exception_type)",
+        )
+        .order("target_date", { ascending: false })
+        .order("done_at", { ascending: false, nullsFirst: false })
+        .limit(100),
     ]);
 
-    if (studentsResult.error || weeklyResult.error || exceptionsResult.error || allExceptionLocationsResult.error) {
+    if (
+      studentsResult.error ||
+      weeklyResult.error ||
+      exceptionsResult.error ||
+      allExceptionLocationsResult.error ||
+      checkLogsResult.error
+    ) {
       setMessage(
         studentsResult.error?.message ??
           weeklyResult.error?.message ??
           exceptionsResult.error?.message ??
+          checkLogsResult.error?.message ??
           "관리자 데이터를 불러오지 못했습니다.",
       );
       return;
@@ -232,6 +254,7 @@ export function AdminPanel() {
         .map((item) => item.location)
         .filter((value): value is string => Boolean(value?.trim())),
     );
+    setCheckLogs((checkLogsResult.data ?? []) as unknown as CheckLog[]);
   }
 
   async function addStudent(event: FormEvent<HTMLFormElement>) {
@@ -744,6 +767,18 @@ export function AdminPanel() {
             </div>
           ) : null}
 
+          <Panel title="확인">
+            <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+              {checkLogs.length === 0 ? (
+                <p className="rounded-lg bg-stone-50 px-3 py-4 text-sm font-medium text-stone-500">
+                  확인할 체크 로그가 없습니다.
+                </p>
+              ) : (
+                checkLogs.map((log) => <CheckLogRow key={log.id} log={log} />)
+              )}
+            </div>
+          </Panel>
+
           <Panel title="학생 등록">
             <form onSubmit={addStudent} className="space-y-3">
               <Input value={studentName} onChange={setStudentName} placeholder="학생 이름" />
@@ -940,7 +975,7 @@ export function AdminPanel() {
             </form>
           </Panel>
 
-          <Panel title="반복 스케줄 관리">
+          <Panel title="스케줄 관리">
             <ManageDayTabs selectedDay={scheduleManageDay} onSelect={setScheduleManageDay} />
             <Input value={scheduleFilter} onChange={setScheduleFilter} placeholder="학생/위치 검색" />
             <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto pr-1">
@@ -1180,6 +1215,31 @@ function ManageDayTabs({
           {day.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+function CheckLogRow({ log }: { log: CheckLog }) {
+  const schedule = log.schedule_exceptions ?? log.weekly_schedules;
+  const time = schedule?.run_time ? formatTime(schedule.run_time) : "";
+  const typeLabel = schedule?.schedule_type ? TYPE_LABEL[schedule.schedule_type] : "";
+  const location = schedule?.location ?? "";
+
+  return (
+    <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="min-w-0 flex-1 truncate text-sm font-black text-stone-900">
+          {log.students?.name ?? "학생 없음"} · {log.is_done ? "완료" : "미완료"}
+        </p>
+        <span className={`shrink-0 rounded-md px-2 py-1 text-xs font-black ${
+          log.is_done ? "bg-emerald-100 text-emerald-800" : "bg-stone-200 text-stone-600"
+        }`}>
+          {log.done_at ? formatDoneTime(log.done_at) : "-"}
+        </span>
+      </div>
+      <p className="mt-1 truncate text-xs font-bold text-stone-500">
+        {log.target_date} {time} {typeLabel} {location}
+      </p>
     </div>
   );
 }
