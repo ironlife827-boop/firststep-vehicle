@@ -192,7 +192,7 @@ export function isPastScheduleTime(targetDate: string, runTime: string) {
     return false;
   }
 
-  const PAST_DELAY_MINUTES = 30;
+  const PAST_DELAY_MINUTES = 15;
 
   const [hour, minute] = formatTime(runTime).split(":").map(Number);
   const scheduleMinutes = hour * 60 + minute;
