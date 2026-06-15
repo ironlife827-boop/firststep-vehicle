@@ -192,8 +192,13 @@ export function isPastScheduleTime(targetDate: string, runTime: string) {
     return false;
   }
 
+  const PAST_DELAY_MINUTES = 30;
+
   const [hour, minute] = formatTime(runTime).split(":").map(Number);
-  return hour * 60 + minute < now.getHours() * 60 + now.getMinutes();
+  const scheduleMinutes = hour * 60 + minute;
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  return currentMinutes >= scheduleMinutes + PAST_DELAY_MINUTES;
 }
 
 export function statusKey(
