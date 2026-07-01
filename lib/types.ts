@@ -1,4 +1,4 @@
-export type ScheduleType = "PICKUP" | "DROP" | "MOVE";
+export type ScheduleType = "PICKUP" | "DROP" | "DROP_START" | "MOVE";
 export type ExceptionType = "CHANGE" | "CANCEL" | "ADD";
 
 export type Student = {

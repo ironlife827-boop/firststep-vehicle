@@ -17,10 +17,12 @@ export const DAYS = [
 export const TYPE_LABEL = {
   PICKUP: "픽업",
   DROP: "드랍",
+  DROP_START: "드랍 출발",
   MOVE: "이동",
 } as const;
 
 export const ACADEMY_DROP_LOCATION = "첫단추영어학원";
+export const DROP_START_LOCATION = "드랍 출발";
 
 export function isAcademyDropItem(item: Pick<ScheduleItem, "student_id" | "schedule_type" | "location">) {
   return item.student_id === null && item.schedule_type === "DROP" && item.location === ACADEMY_DROP_LOCATION;
@@ -28,6 +30,34 @@ export function isAcademyDropItem(item: Pick<ScheduleItem, "student_id" | "sched
 
 export function isAcademyDropGroup(group: Pick<ScheduleGroup, "items" | "schedule_type" | "location">) {
   return group.schedule_type === "DROP" && group.location === ACADEMY_DROP_LOCATION && group.items.every(isAcademyDropItem);
+}
+
+export function isDropStartItem(item: Pick<ScheduleItem, "student_id" | "schedule_type" | "location">) {
+  return item.student_id === null && item.schedule_type === "DROP_START";
+}
+
+export function isDropStartGroup(group: Pick<ScheduleGroup, "items" | "schedule_type">) {
+  return group.schedule_type === "DROP_START" && group.items.every(isDropStartItem);
+}
+
+export function getSchedulePriority(item: Pick<ScheduleItem | ScheduleGroup, "schedule_type" | "location">) {
+  if (item.schedule_type === "DROP" && item.location === ACADEMY_DROP_LOCATION) {
+    return 0;
+  }
+
+  if (item.schedule_type === "DROP_START") {
+    return 1;
+  }
+
+  if (item.schedule_type === "PICKUP") {
+    return 2;
+  }
+
+  if (item.schedule_type === "DROP") {
+    return 3;
+  }
+
+  return 4;
 }
 
 export function getTodayDayOfWeek() {
@@ -136,6 +166,10 @@ export function buildScheduleItems(
     if (timeCompare !== 0) {
       return timeCompare;
     }
+    const priorityCompare = getSchedulePriority(a) - getSchedulePriority(b);
+    if (priorityCompare !== 0) {
+      return priorityCompare;
+    }
     const locationCompare = a.location.localeCompare(b.location, "ko");
     if (locationCompare !== 0) {
       return locationCompare;
@@ -176,12 +210,26 @@ export function groupScheduleItems(items: ScheduleItem[]) {
     });
   }
 
-  return Array.from(groupMap.values()).map((group) => ({
-    ...group,
-    items: [...group.items].sort((a, b) =>
-      (a.student_name ?? "").localeCompare(b.student_name ?? "", "ko"),
-    ),
-  }));
+  return Array.from(groupMap.values())
+    .map((group) => ({
+      ...group,
+      items: [...group.items].sort((a, b) =>
+        (a.student_name ?? "").localeCompare(b.student_name ?? "", "ko"),
+      ),
+    }))
+    .sort((a, b) => {
+      const timeCompare = formatTime(a.run_time).localeCompare(formatTime(b.run_time));
+      if (timeCompare !== 0) {
+        return timeCompare;
+      }
+
+      const priorityCompare = getSchedulePriority(a) - getSchedulePriority(b);
+      if (priorityCompare !== 0) {
+        return priorityCompare;
+      }
+
+      return a.location.localeCompare(b.location, "ko");
+    });
 }
 
 export function isPastScheduleTime(targetDate: string, runTime: string) {
