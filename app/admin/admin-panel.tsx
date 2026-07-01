@@ -32,7 +32,6 @@ const SCHEDULE_TYPES: { value: StudentScheduleType; label: string }[] = [
 
 const EXCEPTION_TYPES: { value: ExceptionType; label: string }[] = [
   { value: "ADD", label: "추가" },
-  { value: "CHANGE", label: "변경" },
   { value: "CANCEL", label: "취소" },
 ];
 
@@ -55,6 +54,7 @@ export function AdminPanel() {
   const [academyDropManageDay, setAcademyDropManageDay] = useState<number | null>(null);
   const [exceptionType, setExceptionType] = useState<ExceptionType>("ADD");
   const [exceptionStudentIds, setExceptionStudentIds] = useState<string[]>([]);
+  const [exceptionSearchStudentId, setExceptionSearchStudentId] = useState("");
   const [exceptionGroupKey, setExceptionGroupKey] = useState("");
   const [exceptionDate, setExceptionDate] = useState("");
   const [exceptionTime, setExceptionTime] = useState("15:20");
@@ -164,14 +164,22 @@ export function AdminPanel() {
     }
 
     const targetDay = getKoreanWeekday(exceptionDate);
-    return groupWeeklySchedules(
+    const groups = groupWeeklySchedules(
       weeklySchedules
         .filter((schedule) => schedule.schedule_type !== "MOVE")
         .filter((schedule) => schedule.student_id !== null)
         .filter((schedule) => schedule.day_of_week === targetDay)
         .filter((schedule) => schedule.is_active),
     );
-  }, [exceptionDate, exceptionType, weeklySchedules]);
+
+    if (!exceptionSearchStudentId) {
+      return groups;
+    }
+
+    return groups.filter((group) =>
+      group.schedules.some((schedule) => schedule.student_id === exceptionSearchStudentId),
+    );
+  }, [exceptionDate, exceptionSearchStudentId, exceptionType, weeklySchedules]);
 
   const selectedExceptionGroup = useMemo(
     () => exceptionScheduleGroups.find((group) => group.key === exceptionGroupKey) ?? null,
@@ -214,14 +222,34 @@ export function AdminPanel() {
       return;
     }
 
-    setExceptionStudentIds(
-      selectedGroup.schedules
-        .map((schedule) => schedule.student_id)
-        .filter((studentId): studentId is string => Boolean(studentId)),
-    );
+    if (
+      exceptionType === "CANCEL" &&
+      exceptionSearchStudentId &&
+      selectedGroup.schedules.some((schedule) => schedule.student_id === exceptionSearchStudentId)
+    ) {
+      setExceptionStudentIds([exceptionSearchStudentId]);
+    } else {
+      setExceptionStudentIds(
+        selectedGroup.schedules
+          .map((schedule) => schedule.student_id)
+          .filter((studentId): studentId is string => Boolean(studentId)),
+      );
+    }
     setExceptionTime(formatTime(selectedGroup.run_time));
-    setExceptionScheduleType(selectedGroup.schedule_type === "DROP" ? "DROP" : "PICKUP");
+    setExceptionScheduleType(
+      selectedGroup.schedule_type === "DROP_START"
+        ? "DROP_START"
+        : selectedGroup.schedule_type === "DROP"
+          ? "DROP"
+          : "PICKUP",
+    );
     setExceptionLocation(selectedGroup.location);
+  }
+
+  function selectExceptionSearchStudent(studentId: string) {
+    setExceptionSearchStudentId(studentId);
+    setExceptionGroupKey("");
+    setExceptionStudentIds([]);
   }
 
   async function loadAdminData() {
@@ -531,18 +559,13 @@ export function AdminPanel() {
       return;
     }
 
-    if ((exceptionType === "CHANGE" || exceptionType === "CANCEL") && !selectedExceptionGroup) {
-      setMessage("변경하거나 취소할 일정 묶음을 선택해 주세요.");
+    if (exceptionType === "CANCEL" && !selectedExceptionGroup) {
+      setMessage("취소할 일정 묶음을 선택해 주세요.");
       return;
     }
 
-    if ((exceptionType === "CHANGE" || exceptionType === "CANCEL") && exceptionStudentIds.length === 0) {
-      setMessage("변경하거나 취소할 학생을 선택해 주세요.");
-      return;
-    }
-
-    if (exceptionType === "CHANGE" && (!exceptionLocation.trim() || !exceptionTime)) {
-      setMessage("변경할 시간과 위치를 입력해 주세요.");
+    if (exceptionType === "CANCEL" && exceptionStudentIds.length === 0) {
+      setMessage("취소할 학생을 선택해 주세요.");
       return;
     }
 
@@ -565,9 +588,9 @@ export function AdminPanel() {
             student_id: schedule.student_id,
             weekly_schedule_id: schedule.id,
             target_date: exceptionDate,
-            run_time: exceptionType === "CANCEL" ? null : exceptionTime,
-            schedule_type: exceptionType === "CANCEL" ? null : exceptionScheduleType,
-            location: exceptionType === "CANCEL" ? null : exceptionLocation.trim(),
+            run_time: null,
+            schedule_type: null,
+            location: null,
             exception_type: exceptionType,
             memo: exceptionMemo.trim() || null,
           }));
@@ -948,6 +971,7 @@ export function AdminPanel() {
                   value={exceptionType}
                   onChange={(value) => {
                     setExceptionType(value as ExceptionType);
+                    setExceptionSearchStudentId("");
                     setExceptionGroupKey("");
                     setExceptionStudentIds([]);
                   }}
@@ -963,6 +987,7 @@ export function AdminPanel() {
                   value={exceptionDate}
                   onChange={(value) => {
                     setExceptionDate(value);
+                    setExceptionSearchStudentId("");
                     setExceptionGroupKey("");
                     setExceptionStudentIds([]);
                   }}
@@ -979,30 +1004,52 @@ export function AdminPanel() {
                 />
               ) : (
                 <>
-                  <Select value={exceptionGroupKey} onChange={selectExceptionGroup}>
-                    <option value="">{exceptionDate ? "일정 묶음 선택" : "날짜를 먼저 선택"}</option>
-                    {exceptionScheduleGroups.map((group) => (
-                      <option key={group.key} value={group.key}>
-                        {formatTime(group.run_time)} {TYPE_LABEL[group.schedule_type]} {group.location} ·{" "}
-                        {group.schedules.length}명
-                      </option>
-                    ))}
-                  </Select>
-                  {selectedExceptionGroup ? (
-                    <ScheduleStudentPicker
-                      schedules={selectedExceptionGroup.schedules}
-                      selectedIds={exceptionStudentIds}
-                      onToggle={toggleExceptionStudent}
-                      onSelectAll={() =>
-                        setExceptionStudentIds(
-                          selectedExceptionGroup.schedules
-                            .map((schedule) => schedule.student_id)
-                            .filter((studentId): studentId is string => Boolean(studentId)),
-                        )
-                      }
-                      onClear={() => setExceptionStudentIds([])}
+                  {exceptionDate ? (
+                    <StudentSearchPicker
+                      students={activeStudents}
+                      selectedId={exceptionSearchStudentId}
+                      onSelect={selectExceptionSearchStudent}
+                      onClear={() => {
+                        setExceptionSearchStudentId("");
+                        setExceptionGroupKey("");
+                        setExceptionStudentIds([]);
+                      }}
                     />
                   ) : null}
+                  {exceptionSearchStudentId ? (
+                    <>
+                      <Select value={exceptionGroupKey} onChange={selectExceptionGroup}>
+                        <option value="">
+                          {exceptionScheduleGroups.length > 0 ? "취소할 일정 묶음 선택" : "해당 학생 일정 없음"}
+                        </option>
+                        {exceptionScheduleGroups.map((group) => (
+                          <option key={group.key} value={group.key}>
+                            {formatTime(group.run_time)} {TYPE_LABEL[group.schedule_type]} {group.location} ·{" "}
+                            {group.schedules.length}명
+                          </option>
+                        ))}
+                      </Select>
+                      {selectedExceptionGroup ? (
+                        <ScheduleStudentPicker
+                          schedules={selectedExceptionGroup.schedules}
+                          selectedIds={exceptionStudentIds}
+                          onToggle={toggleExceptionStudent}
+                          onSelectAll={() =>
+                            setExceptionStudentIds(
+                              selectedExceptionGroup.schedules
+                                .map((schedule) => schedule.student_id)
+                                .filter((studentId): studentId is string => Boolean(studentId)),
+                            )
+                          }
+                          onClear={() => setExceptionStudentIds([])}
+                        />
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="rounded-lg bg-stone-50 px-3 py-3 text-sm font-bold text-stone-500">
+                      날짜 선택 후 학생을 검색해서 선택하세요.
+                    </p>
+                  )}
                 </>
               )}
 
@@ -1338,6 +1385,75 @@ function AcademyDropManageRow({
       >
         삭제
       </button>
+    </div>
+  );
+}
+
+function StudentSearchPicker({
+  students,
+  selectedId,
+  onSelect,
+  onClear,
+}: {
+  students: Student[];
+  selectedId: string;
+  onSelect: (studentId: string) => void;
+  onClear: () => void;
+}) {
+  const [keyword, setKeyword] = useState("");
+  const selectedStudent = students.find((student) => student.id === selectedId) ?? null;
+  const visibleStudents = useMemo(() => {
+    const value = keyword.trim().toLocaleLowerCase("ko-KR");
+    if (!value) {
+      return students.slice(0, 12);
+    }
+
+    return students
+      .filter((student) => student.name.toLocaleLowerCase("ko-KR").includes(value))
+      .slice(0, 12);
+  }, [keyword, students]);
+
+  return (
+    <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-black text-emerald-900">
+          {selectedStudent ? `선택: ${selectedStudent.name}` : "학생 검색"}
+        </p>
+        {selectedId ? (
+          <button type="button" onClick={onClear} className="text-xs font-black text-red-600">
+            해제
+          </button>
+        ) : null}
+      </div>
+      <div className="mt-2">
+        <Input value={keyword} onChange={setKeyword} placeholder="학생 이름 검색" />
+      </div>
+      <div className="mt-2 grid max-h-44 grid-cols-2 gap-2 overflow-y-auto pr-1">
+        {visibleStudents.length === 0 ? (
+          <p className="col-span-2 rounded-lg bg-white px-3 py-3 text-sm font-medium text-stone-500">
+            검색된 학생이 없습니다.
+          </p>
+        ) : (
+          visibleStudents.map((student) => {
+            const isSelected = selectedId === student.id;
+
+            return (
+              <button
+                key={student.id}
+                type="button"
+                onClick={() => onSelect(student.id)}
+                className={`min-h-10 rounded-lg border px-3 py-2 text-left text-sm font-black ${
+                  isSelected
+                    ? "border-emerald-700 bg-emerald-700 text-white"
+                    : "border-emerald-200 bg-white text-stone-800"
+                }`}
+              >
+                {student.name}
+              </button>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
