@@ -22,7 +22,6 @@ export const TYPE_LABEL = {
 } as const;
 
 export const ACADEMY_DROP_LOCATION = "첫단추영어학원";
-export const DROP_START_LOCATION = "드랍 출발";
 
 export function isAcademyDropItem(item: Pick<ScheduleItem, "student_id" | "schedule_type" | "location">) {
   return item.student_id === null && item.schedule_type === "DROP" && item.location === ACADEMY_DROP_LOCATION;
@@ -30,14 +29,6 @@ export function isAcademyDropItem(item: Pick<ScheduleItem, "student_id" | "sched
 
 export function isAcademyDropGroup(group: Pick<ScheduleGroup, "items" | "schedule_type" | "location">) {
   return group.schedule_type === "DROP" && group.location === ACADEMY_DROP_LOCATION && group.items.every(isAcademyDropItem);
-}
-
-export function isDropStartItem(item: Pick<ScheduleItem, "student_id" | "schedule_type" | "location">) {
-  return item.student_id === null && item.schedule_type === "DROP_START";
-}
-
-export function isDropStartGroup(group: Pick<ScheduleGroup, "items" | "schedule_type">) {
-  return group.schedule_type === "DROP_START" && group.items.every(isDropStartItem);
 }
 
 export function getSchedulePriority(item: Pick<ScheduleItem | ScheduleGroup, "schedule_type" | "location">) {

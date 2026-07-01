@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { ACADEMY_DROP_LOCATION, DAYS, DROP_START_LOCATION, formatDoneTime, formatTime, getSchedulePriority, TYPE_LABEL } from "@/lib/schedule";
+import { ACADEMY_DROP_LOCATION, DAYS, formatDoneTime, formatTime, getSchedulePriority, TYPE_LABEL } from "@/lib/schedule";
 import { getSupabase } from "@/lib/supabase";
 import type { DailyScheduleStatus, ExceptionType, ScheduleException, ScheduleType, Student, WeeklySchedule } from "@/lib/types";
 
@@ -22,11 +22,12 @@ type CheckLog = DailyScheduleStatus & {
   schedule_exceptions?: Pick<ScheduleException, "run_time" | "schedule_type" | "location" | "exception_type"> | null;
 };
 
-type StudentScheduleType = Extract<ScheduleType, "PICKUP" | "DROP">;
+type StudentScheduleType = Extract<ScheduleType, "PICKUP" | "DROP" | "DROP_START">;
 
 const SCHEDULE_TYPES: { value: StudentScheduleType; label: string }[] = [
   { value: "PICKUP", label: "픽업" },
   { value: "DROP", label: "드랍" },
+  { value: "DROP_START", label: "드랍 출발" },
 ];
 
 const EXCEPTION_TYPES: { value: ExceptionType; label: string }[] = [
@@ -52,9 +53,6 @@ export function AdminPanel() {
   const [academyDropDays, setAcademyDropDays] = useState<number[]>([1]);
   const [academyDropTime, setAcademyDropTime] = useState("18:00");
   const [academyDropManageDay, setAcademyDropManageDay] = useState<number | null>(null);
-  const [dropStartDays, setDropStartDays] = useState<number[]>([1]);
-  const [dropStartTime, setDropStartTime] = useState("18:00");
-  const [dropStartManageDay, setDropStartManageDay] = useState<number | null>(null);
   const [exceptionType, setExceptionType] = useState<ExceptionType>("ADD");
   const [exceptionStudentIds, setExceptionStudentIds] = useState<string[]>([]);
   const [exceptionGroupKey, setExceptionGroupKey] = useState("");
@@ -159,20 +157,6 @@ export function AdminPanel() {
         return formatTime(a.run_time).localeCompare(formatTime(b.run_time));
       });
   }, [academyDropManageDay, weeklySchedules]);
-
-  const filteredDropStartSchedules = useMemo(() => {
-    return weeklySchedules
-      .filter((schedule) => schedule.student_id === null)
-      .filter((schedule) => schedule.schedule_type === "DROP_START")
-      .filter((schedule) => dropStartManageDay === null || schedule.day_of_week === dropStartManageDay)
-      .sort((a, b) => {
-        if (a.day_of_week !== b.day_of_week) {
-          return a.day_of_week - b.day_of_week;
-        }
-
-        return formatTime(a.run_time).localeCompare(formatTime(b.run_time));
-      });
-  }, [dropStartManageDay, weeklySchedules]);
 
   const exceptionScheduleGroups = useMemo(() => {
     if (!exceptionDate || exceptionType === "ADD") {
@@ -534,90 +518,6 @@ export function AdminPanel() {
     void loadAdminData();
   }
 
-  async function addDropStartSchedule(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!dropStartTime || dropStartDays.length === 0) {
-      setMessage("드랍 출발 요일과 시간을 선택해 주세요.");
-      return;
-    }
-
-    const scheduleRows = dropStartDays.map((day) => ({
-      student_id: null,
-      day_of_week: day,
-      run_time: dropStartTime,
-      schedule_type: "DROP_START" as const,
-      location: DROP_START_LOCATION,
-      is_active: true,
-    }));
-    const findDuplicateSchedules = (row: (typeof scheduleRows)[number]) =>
-      weeklySchedules.filter(
-        (schedule) =>
-          schedule.is_active &&
-          schedule.student_id === null &&
-          schedule.day_of_week === row.day_of_week &&
-          formatTime(schedule.run_time) === row.run_time &&
-          schedule.schedule_type === row.schedule_type,
-      );
-    const duplicateSchedules = scheduleRows.flatMap((row) => findDuplicateSchedules(row));
-
-    if (
-      duplicateSchedules.length > 0 &&
-      !window.confirm(`같은 드랍 출발 일정이 이미 ${duplicateSchedules.length}개 있습니다. 기존 일정에 덮어쓸까요?`)
-    ) {
-      return;
-    }
-
-    setIsSaving(true);
-    const supabase = getSupabase();
-    const rowsToInsert = scheduleRows.filter((row) => findDuplicateSchedules(row).length === 0);
-    const rowsToUpdate = scheduleRows.flatMap((row) =>
-      findDuplicateSchedules(row).map((schedule) => ({
-        id: schedule.id,
-        row,
-      })),
-    );
-    const [insertResult, updateResults] = await Promise.all([
-      rowsToInsert.length > 0
-        ? supabase.from("weekly_schedules").insert(rowsToInsert)
-        : Promise.resolve({ error: null }),
-      Promise.all(
-        rowsToUpdate.map(({ id, row }) =>
-          supabase
-            .from("weekly_schedules")
-            .update(row)
-            .eq("id", id),
-        ),
-      ),
-    ]);
-    setIsSaving(false);
-
-    const updateError = updateResults.find((result) => result.error)?.error;
-    if (insertResult.error || updateError) {
-      setMessage(insertResult.error?.message ?? updateError?.message ?? "드랍 출발 일정을 저장하지 못했습니다.");
-      return;
-    }
-
-    setMessage(`드랍 출발 일정을 저장했습니다. 새로 등록 ${rowsToInsert.length}개 · 덮어쓰기 ${rowsToUpdate.length}개`);
-    void loadAdminData();
-  }
-
-  async function deleteDropStartSchedule(id: string) {
-    if (!window.confirm("드랍 출발 일정을 삭제할까요?")) {
-      return;
-    }
-
-    const { error } = await getSupabase().from("weekly_schedules").delete().eq("id", id);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setMessage("드랍 출발 일정을 삭제했습니다.");
-    void loadAdminData();
-  }
-
   async function addException(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -853,14 +753,6 @@ export function AdminPanel() {
     );
   }
 
-  function toggleDropStartDay(day: number) {
-    setDropStartDays((current) =>
-      current.includes(day)
-        ? current.filter((value) => value !== day)
-        : [...current, day].sort((a, b) => a - b),
-    );
-  }
-
   function toggleScheduleStudent(studentId: string) {
     setScheduleStudentIds((current) =>
       current.includes(studentId)
@@ -1013,35 +905,6 @@ export function AdminPanel() {
                       key={schedule.id}
                       schedule={schedule}
                       onDelete={() => void deleteAcademyDropSchedule(schedule.id)}
-                    />
-                  ))
-                )}
-              </div>
-            </div>
-          </Panel>
-
-          <Panel title="드랍 출발 등록">
-            <form onSubmit={addDropStartSchedule} className="space-y-3">
-              <DayPicker selectedDays={dropStartDays} onToggle={toggleDropStartDay} />
-              <Input type="time" value={dropStartTime} onChange={setDropStartTime} placeholder="시간" />
-              <div className="rounded-lg border border-orange-100 bg-orange-50 px-3 py-2 text-sm font-black text-orange-900">
-                {formatTime(dropStartTime)} 드랍 출발
-              </div>
-              <SubmitButton disabled={isSaving}>드랍 출발 등록</SubmitButton>
-            </form>
-            <div className="mt-4 border-t border-emerald-100 pt-4">
-              <ManageDayTabs selectedDay={dropStartManageDay} onSelect={setDropStartManageDay} />
-              <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
-                {filteredDropStartSchedules.length === 0 ? (
-                  <p className="rounded-lg bg-stone-50 px-3 py-4 text-sm font-medium text-stone-500">
-                    등록된 드랍 출발 일정이 없습니다.
-                  </p>
-                ) : (
-                  filteredDropStartSchedules.map((schedule) => (
-                    <DropStartManageRow
-                      key={schedule.id}
-                      schedule={schedule}
-                      onDelete={() => void deleteDropStartSchedule(schedule.id)}
                     />
                   ))
                 )}
@@ -1467,32 +1330,6 @@ function AcademyDropManageRow({
           {DAYS.find((day) => day.value === schedule.day_of_week)?.label} {formatTime(schedule.run_time)}
         </p>
         <p className="truncate text-xs font-bold text-cyan-700">첫단추영어학원 드랍</p>
-      </div>
-      <button
-        type="button"
-        onClick={onDelete}
-        className="h-9 shrink-0 rounded-lg bg-red-50 px-3 text-xs font-black text-red-700"
-      >
-        삭제
-      </button>
-    </div>
-  );
-}
-
-function DropStartManageRow({
-  schedule,
-  onDelete,
-}: {
-  schedule: WeeklySchedule;
-  onDelete: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-orange-100 bg-orange-50 px-3 py-2">
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-black text-orange-950">
-          {DAYS.find((day) => day.value === schedule.day_of_week)?.label} {formatTime(schedule.run_time)}
-        </p>
-        <p className="truncate text-xs font-bold text-orange-700">드랍 출발</p>
       </div>
       <button
         type="button"

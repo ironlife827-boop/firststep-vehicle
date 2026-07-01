@@ -15,7 +15,6 @@ import {
   getTodayDayOfWeek,
   groupScheduleItems,
   isAcademyDropGroup,
-  isDropStartGroup,
   isPastScheduleTime,
   statusKey,
   TYPE_LABEL,
@@ -359,8 +358,6 @@ export function ScheduleBoard() {
                 visibleGroups.map((group) =>
                   isAcademyDropGroup(group) ? (
                     <AcademyDropRow key={group.key} group={group} />
-                  ) : isDropStartGroup(group) ? (
-                    <DropStartRow key={group.key} group={group} />
                   ) : (
                     <ScheduleCard
                       key={group.key}
@@ -386,15 +383,6 @@ function AcademyDropRow({ group }: { group: ScheduleGroup }) {
     <div className="flex min-h-12 items-center gap-3 rounded-lg border border-cyan-100 bg-cyan-50 px-4 py-2">
       <span className="w-16 shrink-0 text-lg font-black text-cyan-900">{formatTime(group.run_time)}</span>
       <span className="min-w-0 flex-1 truncate text-sm font-black text-stone-900">첫단추영어학원 드랍</span>
-    </div>
-  );
-}
-
-function DropStartRow({ group }: { group: ScheduleGroup }) {
-  return (
-    <div className="flex min-h-12 items-center gap-3 rounded-lg border border-orange-100 bg-orange-50 px-4 py-2">
-      <span className="w-16 shrink-0 text-lg font-black text-orange-900">{formatTime(group.run_time)}</span>
-      <span className="min-w-0 flex-1 truncate text-sm font-black text-stone-900">드랍 출발</span>
     </div>
   );
 }
