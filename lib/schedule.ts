@@ -2,6 +2,7 @@ import type {
   DailyScheduleStatus,
   ScheduleException,
   ScheduleGroup,
+  ScheduleGroupOrder,
   ScheduleItem,
   WeeklySchedule,
 } from "./types";
@@ -49,6 +50,26 @@ export function getSchedulePriority(item: Pick<ScheduleItem | ScheduleGroup, "sc
   }
 
   return 4;
+}
+
+export function scheduleGroupOrderKey(
+  dayOfWeek: number,
+  runTime: string,
+  scheduleType: string,
+  location: string,
+) {
+  return `${dayOfWeek}|${formatTime(runTime)}|${scheduleType}|${location}`;
+}
+
+function getSavedGroupOrder(
+  group: Pick<ScheduleGroup, "run_time" | "schedule_type" | "location">,
+  orders: ScheduleGroupOrder[],
+  dayOfWeek: number,
+) {
+  const key = scheduleGroupOrderKey(dayOfWeek, group.run_time, group.schedule_type, group.location);
+  return orders.find((order) =>
+    scheduleGroupOrderKey(dayOfWeek, order.run_time, order.schedule_type, order.location) === key
+  )?.sort_order;
 }
 
 export function getTodayDayOfWeek() {
@@ -180,7 +201,11 @@ export function filterItems(items: ScheduleItem[], searchTerm: string) {
   );
 }
 
-export function groupScheduleItems(items: ScheduleItem[]) {
+export function groupScheduleItems(
+  items: ScheduleItem[],
+  orders: ScheduleGroupOrder[] = [],
+  dayOfWeek = 1,
+) {
   const groupMap = new Map<string, ScheduleGroup>();
 
   for (const item of items) {
@@ -217,6 +242,12 @@ export function groupScheduleItems(items: ScheduleItem[]) {
       const priorityCompare = getSchedulePriority(a) - getSchedulePriority(b);
       if (priorityCompare !== 0) {
         return priorityCompare;
+      }
+
+      const orderA = getSavedGroupOrder(a, orders, dayOfWeek);
+      const orderB = getSavedGroupOrder(b, orders, dayOfWeek);
+      if (orderA !== undefined || orderB !== undefined) {
+        return (orderA ?? Number.MAX_SAFE_INTEGER) - (orderB ?? Number.MAX_SAFE_INTEGER);
       }
 
       return a.location.localeCompare(b.location, "ko");

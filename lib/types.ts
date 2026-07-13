@@ -63,3 +63,12 @@ export type ScheduleGroup = {
   location: string;
   items: ScheduleItem[];
 };
+
+export type ScheduleGroupOrder = {
+  id?: string;
+  day_of_week: number;
+  run_time: string;
+  schedule_type: ScheduleType;
+  location: string;
+  sort_order: number;
+};

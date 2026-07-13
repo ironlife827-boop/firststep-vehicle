@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "@/lib/supabase";
 import {
   buildScheduleItems,
@@ -16,6 +16,7 @@ import {
   groupScheduleItems,
   isAcademyDropGroup,
   isPastScheduleTime,
+  scheduleGroupOrderKey,
   statusKey,
   TYPE_LABEL,
 } from "@/lib/schedule";
@@ -23,6 +24,7 @@ import type {
   DailyScheduleStatus,
   ScheduleException,
   ScheduleGroup,
+  ScheduleGroupOrder,
   ScheduleItem,
   WeeklySchedule,
 } from "@/lib/types";
@@ -40,18 +42,23 @@ export function ScheduleBoard() {
   const [weeklySchedules, setWeeklySchedules] = useState<WeeklySchedule[]>([]);
   const [exceptions, setExceptions] = useState<ScheduleException[]>([]);
   const [statuses, setStatuses] = useState<DailyScheduleStatus[]>([]);
+  const [groupOrders, setGroupOrders] = useState<ScheduleGroupOrder[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [showPastSchedules, setShowPastSchedules] = useState(false);
+  const [draggingKey, setDraggingKey] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragKeyRef = useRef("");
+  const pendingOrderRowsRef = useRef<ScheduleGroupOrder[]>([]);
 
   const targetDate = useMemo(() => getDateForWeekday(selectedDay), [selectedDay]);
   const statusMap = useMemo(() => buildStatusMap(statuses), [statuses]);
 
   const groups = useMemo(() => {
     const items = buildScheduleItems(weeklySchedules, exceptions, targetDate);
-    return groupScheduleItems(filterItems(items, searchTerm));
-  }, [weeklySchedules, exceptions, targetDate, searchTerm]);
+    return groupScheduleItems(filterItems(items, searchTerm), groupOrders, selectedDay);
+  }, [weeklySchedules, exceptions, targetDate, searchTerm, groupOrders, selectedDay]);
 
   const pastGroups = useMemo(
     () => groups.filter((group) => isPastScheduleTime(targetDate, group.run_time)),
@@ -114,7 +121,7 @@ export function ScheduleBoard() {
     setErrorMessage("");
 
     const supabase = getSupabase();
-    const [weeklyResult, exceptionResult, statusResult] = await Promise.all([
+    const [weeklyResult, exceptionResult, statusResult, orderResult] = await Promise.all([
       supabase
         .from("weekly_schedules")
         .select("id, student_id, day_of_week, run_time, schedule_type, location, is_active, students(id, name, memo, is_active)")
@@ -130,9 +137,13 @@ export function ScheduleBoard() {
         .from("daily_schedule_status")
         .select("id, weekly_schedule_id, schedule_exception_id, target_date, student_id, is_done, done_at")
         .eq("target_date", targetDate),
+      supabase
+        .from("schedule_group_orders")
+        .select("id, day_of_week, run_time, schedule_type, location, sort_order")
+        .eq("day_of_week", selectedDay),
     ]);
 
-    if (weeklyResult.error || exceptionResult.error || statusResult.error) {
+    if (weeklyResult.error || exceptionResult.error || statusResult.error || orderResult.error) {
       setErrorMessage(
         weeklyResult.error?.message ??
           exceptionResult.error?.message ??
@@ -143,6 +154,7 @@ export function ScheduleBoard() {
       setWeeklySchedules((weeklyResult.data ?? []) as unknown as WeeklySchedule[]);
       setExceptions((exceptionResult.data ?? []) as unknown as ScheduleException[]);
       setStatuses((statusResult.data ?? []) as unknown as DailyScheduleStatus[]);
+      setGroupOrders((orderResult.data ?? []) as ScheduleGroupOrder[]);
     }
 
     if (showLoading) {
@@ -178,6 +190,11 @@ export function ScheduleBoard() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "schedule_exceptions" },
+        () => void loadSchedule({ showLoading: false }),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "schedule_group_orders" },
         () => void loadSchedule({ showLoading: false }),
       )
       .subscribe();
@@ -255,6 +272,10 @@ export function ScheduleBoard() {
   }
 
   function toggleGroup(key: string) {
+    if (draggingKey) {
+      return;
+    }
+
     setExpandedGroups((current) => {
       const next = new Set(current);
       if (next.has(key)) {
@@ -264,6 +285,119 @@ export function ScheduleBoard() {
       }
       return next;
     });
+  }
+
+  function clearLongPressTimer() {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }
+
+  function beginGroupPress(event: PointerEvent<HTMLElement>, group: ScheduleGroup) {
+    clearLongPressTimer();
+    if (isAcademyDropGroup(group) || searchTerm.trim()) {
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    longPressTimer.current = setTimeout(() => {
+      dragKeyRef.current = group.key;
+      setDraggingKey(group.key);
+    }, 350);
+  }
+
+  function moveGroupToTarget(targetKey: string) {
+    const sourceKey = dragKeyRef.current;
+    if (!sourceKey || sourceKey === targetKey) {
+      return;
+    }
+
+    const sourceGroup = visibleGroups.find((group) => group.key === sourceKey);
+    const targetGroup = visibleGroups.find((group) => group.key === targetKey);
+    if (
+      !sourceGroup ||
+      !targetGroup ||
+      isAcademyDropGroup(sourceGroup) ||
+      isAcademyDropGroup(targetGroup) ||
+      formatTime(sourceGroup.run_time) !== formatTime(targetGroup.run_time)
+    ) {
+      return;
+    }
+
+    const sameTimeGroups = visibleGroups.filter(
+      (group) => formatTime(group.run_time) === formatTime(sourceGroup.run_time) && !isAcademyDropGroup(group),
+    );
+    const orderedKeys = sameTimeGroups.map((group) => group.key);
+    const fromIndex = orderedKeys.indexOf(sourceKey);
+    const toIndex = orderedKeys.indexOf(targetKey);
+    if (fromIndex === -1 || toIndex === -1) {
+      return;
+    }
+
+    const [movedKey] = orderedKeys.splice(fromIndex, 1);
+    orderedKeys.splice(toIndex, 0, movedKey);
+
+    const nextRows = orderedKeys
+      .map((key, index) => {
+        const group = sameTimeGroups.find((item) => item.key === key);
+        if (!group) {
+          return null;
+        }
+
+        return {
+          day_of_week: selectedDay,
+          run_time: formatTime(group.run_time),
+          schedule_type: group.schedule_type,
+          location: group.location,
+          sort_order: index,
+        } satisfies ScheduleGroupOrder;
+      })
+      .filter((row): row is ScheduleGroupOrder => Boolean(row));
+
+    pendingOrderRowsRef.current = nextRows;
+    setGroupOrders((current) => {
+      const replaceKeys = new Set(
+        nextRows.map((row) => scheduleGroupOrderKey(selectedDay, row.run_time, row.schedule_type, row.location)),
+      );
+      const kept = current.filter(
+        (row) => !replaceKeys.has(scheduleGroupOrderKey(selectedDay, row.run_time, row.schedule_type, row.location)),
+      );
+      return [...kept, ...nextRows];
+    });
+  }
+
+  function moveGroupByPointer(event: PointerEvent<HTMLElement>) {
+    if (!dragKeyRef.current) {
+      return;
+    }
+
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-group-key]");
+    const targetKey = target?.getAttribute("data-group-key");
+    if (targetKey) {
+      moveGroupToTarget(targetKey);
+    }
+  }
+
+  async function finishGroupDrag() {
+    clearLongPressTimer();
+    const rows = pendingOrderRowsRef.current;
+    dragKeyRef.current = "";
+    pendingOrderRowsRef.current = [];
+    setDraggingKey("");
+
+    if (rows.length === 0) {
+      return;
+    }
+
+    const { error } = await getSupabase()
+      .from("schedule_group_orders")
+      .upsert(rows as never[], { onConflict: "day_of_week,run_time,schedule_type,location" });
+
+    if (error) {
+      setErrorMessage(error.message);
+      void loadSchedule({ showLoading: false });
+    }
   }
 
   return (
@@ -359,14 +493,24 @@ export function ScheduleBoard() {
                   isAcademyDropGroup(group) ? (
                     <AcademyDropRow key={group.key} group={group} />
                   ) : (
-                    <ScheduleCard
+                    <div
                       key={group.key}
-                      group={group}
-                      isExpanded={expandedGroups.has(group.key)}
-                      statusMap={statusMap}
-                      onToggleGroup={toggleGroup}
-                      onToggleDone={toggleDone}
-                    />
+                      data-group-key={group.key}
+                      onPointerDown={(event) => beginGroupPress(event, group)}
+                      onPointerMove={moveGroupByPointer}
+                      onPointerUp={() => void finishGroupDrag()}
+                      onPointerCancel={() => void finishGroupDrag()}
+                      className={draggingKey === group.key ? "scale-[0.98] opacity-70 transition" : "transition"}
+                    >
+                      <ScheduleCard
+                        group={group}
+                        isExpanded={expandedGroups.has(group.key)}
+                        statusMap={statusMap}
+                        isDragging={draggingKey === group.key}
+                        onToggleGroup={toggleGroup}
+                        onToggleDone={toggleDone}
+                      />
+                    </div>
                   ),
                 )
               )}
@@ -391,12 +535,14 @@ function ScheduleCard({
   group,
   isExpanded,
   statusMap,
+  isDragging,
   onToggleGroup,
   onToggleDone,
 }: {
   group: ScheduleGroup;
   isExpanded: boolean;
   statusMap: Map<string, DailyScheduleStatus>;
+  isDragging: boolean;
   onToggleGroup: (key: string) => void;
   onToggleDone: (item: ScheduleItem) => void;
 }) {
@@ -407,9 +553,12 @@ function ScheduleCard({
   ).length;
 
   return (
-    <article className="overflow-hidden rounded-lg border border-emerald-100 bg-white shadow-sm">
+    <article className={`overflow-hidden rounded-lg border bg-white shadow-sm ${
+      isDragging ? "border-emerald-500 shadow-md" : "border-emerald-100"
+    }`}>
       <button
         type="button"
+        disabled={isDragging}
         onClick={() => onToggleGroup(group.key)}
         className="flex min-h-24 w-full items-center gap-3 px-4 py-4 text-left"
       >
