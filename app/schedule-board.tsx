@@ -46,6 +46,7 @@ export function ScheduleBoard() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [showPastSchedules, setShowPastSchedules] = useState(false);
   const [draggingKey, setDraggingKey] = useState("");
+  const [isOrderEditMode, setIsOrderEditMode] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -400,6 +401,67 @@ export function ScheduleBoard() {
     }
   }
 
+  async function saveGroupOrder(rows: ScheduleGroupOrder[]) {
+    if (rows.length === 0) {
+      return;
+    }
+
+    const { error } = await getSupabase()
+      .from("schedule_group_orders")
+      .upsert(rows as never[], { onConflict: "day_of_week,run_time,schedule_type,location" });
+
+    if (error) {
+      setErrorMessage(error.message);
+      void loadSchedule({ showLoading: false });
+    }
+  }
+
+  function getSameTimeEditableGroups(group: ScheduleGroup) {
+    return visibleGroups.filter(
+      (item) => formatTime(item.run_time) === formatTime(group.run_time) && !isAcademyDropGroup(item),
+    );
+  }
+
+  function buildOrderRows(groupsToOrder: ScheduleGroup[]) {
+    return groupsToOrder.map((group, index) => ({
+      day_of_week: selectedDay,
+      run_time: formatTime(group.run_time),
+      schedule_type: group.schedule_type,
+      location: group.location,
+      sort_order: index,
+    }));
+  }
+
+  function applyOrderRows(rows: ScheduleGroupOrder[]) {
+    setGroupOrders((current) => {
+      const replaceKeys = new Set(
+        rows.map((row) => scheduleGroupOrderKey(selectedDay, row.run_time, row.schedule_type, row.location)),
+      );
+      const kept = current.filter(
+        (row) => !replaceKeys.has(scheduleGroupOrderKey(selectedDay, row.run_time, row.schedule_type, row.location)),
+      );
+      return [...kept, ...rows];
+    });
+  }
+
+  async function moveGroupByButton(group: ScheduleGroup, direction: -1 | 1) {
+    const sameTimeGroups = getSameTimeEditableGroups(group);
+    const currentIndex = sameTimeGroups.findIndex((item) => item.key === group.key);
+    const nextIndex = currentIndex + direction;
+
+    if (currentIndex === -1 || nextIndex < 0 || nextIndex >= sameTimeGroups.length) {
+      return;
+    }
+
+    const nextGroups = [...sameTimeGroups];
+    const [moved] = nextGroups.splice(currentIndex, 1);
+    nextGroups.splice(nextIndex, 0, moved);
+
+    const rows = buildOrderRows(nextGroups);
+    applyOrderRows(rows);
+    await saveGroupOrder(rows);
+  }
+
   return (
     <main className="min-h-screen bg-emerald-50 text-stone-950">
       <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col bg-white shadow-sm">
@@ -455,6 +517,14 @@ export function ScheduleBoard() {
             ))}
           </div>
           <p className="mt-2 text-xs font-medium text-stone-500">{targetDate}</p>
+          <button
+            type="button"
+            disabled={Boolean(searchTerm.trim())}
+            onClick={() => setIsOrderEditMode((value) => !value)}
+            className="mt-3 h-10 w-full rounded-lg border border-emerald-200 bg-emerald-50 text-sm font-black text-emerald-800 disabled:bg-stone-100 disabled:text-stone-400"
+          >
+            {isOrderEditMode ? "순서편집 완료" : "순서편집"}
+          </button>
         </section>
 
         <section className="flex-1 space-y-3 px-4 py-4">
@@ -507,6 +577,14 @@ export function ScheduleBoard() {
                         isExpanded={expandedGroups.has(group.key)}
                         statusMap={statusMap}
                         isDragging={draggingKey === group.key}
+                        isOrderEditMode={isOrderEditMode}
+                        canMoveUp={getSameTimeEditableGroups(group).findIndex((item) => item.key === group.key) > 0}
+                        canMoveDown={
+                          getSameTimeEditableGroups(group).findIndex((item) => item.key === group.key) <
+                          getSameTimeEditableGroups(group).length - 1
+                        }
+                        onMoveUp={() => void moveGroupByButton(group, -1)}
+                        onMoveDown={() => void moveGroupByButton(group, 1)}
                         onToggleGroup={toggleGroup}
                         onToggleDone={toggleDone}
                       />
@@ -536,6 +614,11 @@ function ScheduleCard({
   isExpanded,
   statusMap,
   isDragging,
+  isOrderEditMode,
+  canMoveUp,
+  canMoveDown,
+  onMoveUp,
+  onMoveDown,
   onToggleGroup,
   onToggleDone,
 }: {
@@ -543,6 +626,11 @@ function ScheduleCard({
   isExpanded: boolean;
   statusMap: Map<string, DailyScheduleStatus>;
   isDragging: boolean;
+  isOrderEditMode: boolean;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
   onToggleGroup: (key: string) => void;
   onToggleDone: (item: ScheduleItem) => void;
 }) {
@@ -556,29 +644,58 @@ function ScheduleCard({
     <article className={`overflow-hidden rounded-lg border bg-white shadow-sm ${
       isDragging ? "border-emerald-500 shadow-md" : "border-emerald-100"
     }`}>
-      <button
-        type="button"
-        disabled={isDragging}
-        onClick={() => onToggleGroup(group.key)}
-        className="flex min-h-24 w-full items-center gap-3 px-4 py-4 text-left"
-      >
-        <div className="w-16 shrink-0 text-2xl font-black text-emerald-900">
-          {formatTime(group.run_time)}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-md px-2 py-1 text-xs font-bold ring-1 ${TYPE_CLASS[group.schedule_type]}`}>
-              {TYPE_LABEL[group.schedule_type]}
-            </span>
-            <span className="text-sm font-bold text-stone-500">
-              {doneCount}/{group.items.length} 완료
-            </span>
+      <div className="flex min-h-24 w-full items-center gap-3 px-4 py-4 text-left">
+        <button
+          type="button"
+          disabled={isDragging || isOrderEditMode}
+          onClick={() => onToggleGroup(group.key)}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-default"
+        >
+          <div className="w-16 shrink-0 text-2xl font-black text-emerald-900">
+            {formatTime(group.run_time)}
           </div>
-          <p className="mt-2 truncate text-base font-bold text-stone-950">{group.location}</p>
-          <p className="text-sm font-medium text-stone-500">인원 {group.items.length}명</p>
-        </div>
-        <span className="text-xl font-bold text-emerald-700">{isExpanded ? "−" : "+"}</span>
-      </button>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-md px-2 py-1 text-xs font-bold ring-1 ${TYPE_CLASS[group.schedule_type]}`}>
+                {TYPE_LABEL[group.schedule_type]}
+              </span>
+              <span className="text-sm font-bold text-stone-500">
+                {doneCount}/{group.items.length} 완료
+              </span>
+            </div>
+            <p className="mt-2 truncate text-base font-bold text-stone-950">{group.location}</p>
+            <p className="text-sm font-medium text-stone-500">인원 {group.items.length}명</p>
+          </div>
+        </button>
+        {isOrderEditMode ? (
+          <span className="grid shrink-0 grid-cols-1 gap-1">
+            <button
+              type="button"
+              disabled={!canMoveUp}
+              onClick={(event) => {
+                event.stopPropagation();
+                onMoveUp();
+              }}
+              className="h-9 w-9 rounded-lg bg-emerald-50 text-lg font-black text-emerald-800 disabled:bg-stone-100 disabled:text-stone-300"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              disabled={!canMoveDown}
+              onClick={(event) => {
+                event.stopPropagation();
+                onMoveDown();
+              }}
+              className="h-9 w-9 rounded-lg bg-emerald-50 text-lg font-black text-emerald-800 disabled:bg-stone-100 disabled:text-stone-300"
+            >
+              ↓
+            </button>
+          </span>
+        ) : (
+          <span className="text-xl font-bold text-emerald-700">{isExpanded ? "−" : "+"}</span>
+        )}
+      </div>
 
       {isExpanded ? (
         <div className="border-t border-emerald-100 bg-emerald-50/60">
