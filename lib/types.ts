@@ -72,3 +72,23 @@ export type ScheduleGroupOrder = {
   location: string;
   sort_order: number;
 };
+
+export type ScheduleSnapshotPayload = {
+  weekly_schedules: Array<{
+    student_id: string | null;
+    day_of_week: number;
+    run_time: string;
+    schedule_type: ScheduleType;
+    location: string;
+    is_active: boolean;
+  }>;
+  schedule_group_orders?: ScheduleGroupOrder[];
+};
+
+export type ScheduleSnapshot = {
+  id: string;
+  name: string;
+  payload: ScheduleSnapshotPayload;
+  created_at: string;
+  updated_at: string;
+};

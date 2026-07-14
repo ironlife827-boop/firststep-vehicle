@@ -5,7 +5,17 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { ACADEMY_DROP_LOCATION, DAYS, formatDoneTime, formatTime, getSchedulePriority, TYPE_LABEL } from "@/lib/schedule";
 import { getSupabase } from "@/lib/supabase";
-import type { DailyScheduleStatus, ExceptionType, ScheduleException, ScheduleType, Student, WeeklySchedule } from "@/lib/types";
+import type {
+  DailyScheduleStatus,
+  ExceptionType,
+  ScheduleException,
+  ScheduleGroupOrder,
+  ScheduleSnapshot,
+  ScheduleSnapshotPayload,
+  ScheduleType,
+  Student,
+  WeeklySchedule,
+} from "@/lib/types";
 
 type WeeklyScheduleGroup = {
   key: string;
@@ -39,6 +49,7 @@ export function AdminPanel() {
   const [students, setStudents] = useState<Student[]>([]);
   const [weeklySchedules, setWeeklySchedules] = useState<WeeklySchedule[]>([]);
   const [exceptions, setExceptions] = useState<ScheduleException[]>([]);
+  const [snapshots, setSnapshots] = useState<ScheduleSnapshot[]>([]);
   const [checkLogs, setCheckLogs] = useState<CheckLog[]>([]);
   const [allExceptionLocations, setAllExceptionLocations] = useState<string[]>([]);
   const [studentName, setStudentName] = useState("");
@@ -73,6 +84,7 @@ export function AdminPanel() {
   const [editingScheduleLocation, setEditingScheduleLocation] = useState("");
   const [selectedLocationName, setSelectedLocationName] = useState("");
   const [nextLocationName, setNextLocationName] = useState("");
+  const [snapshotName, setSnapshotName] = useState("");
   const [message, setMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
@@ -252,9 +264,167 @@ export function AdminPanel() {
     setExceptionStudentIds([]);
   }
 
+  async function deleteCurrentWeeklySchedules() {
+    const supabase = getSupabase();
+    const alwaysDifferentUuid = "00000000-0000-0000-0000-000000000000";
+
+    const [weeklyResult, orderResult] = await Promise.all([
+      supabase.from("weekly_schedules").delete().neq("id", alwaysDifferentUuid),
+      supabase.from("schedule_group_orders").delete().neq("id", alwaysDifferentUuid),
+    ]);
+
+    return weeklyResult.error ?? orderResult.error ?? null;
+  }
+
+  async function saveScheduleSnapshot(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = snapshotName.trim();
+
+    if (!name) {
+      setMessage("저장 이름을 입력해 주세요.");
+      return;
+    }
+
+    const orderResult = await getSupabase()
+      .from("schedule_group_orders")
+      .select("day_of_week, run_time, schedule_type, location, sort_order");
+
+    if (orderResult.error) {
+      setMessage(orderResult.error.message);
+      return;
+    }
+
+    const payload: ScheduleSnapshotPayload = {
+      weekly_schedules: weeklySchedules.map((schedule) => ({
+        student_id: schedule.student_id,
+        day_of_week: schedule.day_of_week,
+        run_time: formatTime(schedule.run_time),
+        schedule_type: schedule.schedule_type,
+        location: schedule.location,
+        is_active: schedule.is_active,
+      })),
+      schedule_group_orders: (orderResult.data ?? []) as ScheduleGroupOrder[],
+    };
+
+    setIsSaving(true);
+    const { error } = await getSupabase().from("schedule_snapshots").insert({
+      name,
+      payload,
+    });
+    setIsSaving(false);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setSnapshotName("");
+    setMessage(`현재 반복 시간표를 "${name}" 이름으로 저장했습니다.`);
+    void loadAdminData();
+  }
+
+  async function restoreScheduleSnapshot(snapshot: ScheduleSnapshot) {
+    if (!window.confirm(`"${snapshot.name}" 저장본으로 현재 반복 시간표를 교체할까요?`)) {
+      return;
+    }
+
+    if (!window.confirm("현재 반복 스케줄과 학원드랍이 모두 삭제된 뒤 저장본으로 복원됩니다. 진행할까요?")) {
+      return;
+    }
+
+    const payload = snapshot.payload;
+    const scheduleRows = payload.weekly_schedules.map((schedule) => ({
+      student_id: schedule.student_id,
+      day_of_week: schedule.day_of_week,
+      run_time: formatTime(schedule.run_time),
+      schedule_type: schedule.schedule_type,
+      location: schedule.location,
+      is_active: schedule.is_active,
+    }));
+    const orderRows = (payload.schedule_group_orders ?? []).map((order) => ({
+      day_of_week: order.day_of_week,
+      run_time: formatTime(order.run_time),
+      schedule_type: order.schedule_type,
+      location: order.location,
+      sort_order: order.sort_order,
+    }));
+
+    setIsSaving(true);
+    const deleteError = await deleteCurrentWeeklySchedules();
+    if (deleteError) {
+      setIsSaving(false);
+      setMessage(deleteError.message);
+      return;
+    }
+
+    const supabase = getSupabase();
+    const [scheduleResult, orderResult] = await Promise.all([
+      scheduleRows.length > 0
+        ? supabase.from("weekly_schedules").insert(scheduleRows)
+        : Promise.resolve({ error: null }),
+      orderRows.length > 0
+        ? supabase.from("schedule_group_orders").insert(orderRows)
+        : Promise.resolve({ error: null }),
+    ]);
+    setIsSaving(false);
+
+    if (scheduleResult.error || orderResult.error) {
+      setMessage(scheduleResult.error?.message ?? orderResult.error?.message ?? "저장본을 복원하지 못했습니다.");
+      return;
+    }
+
+    setMessage(`"${snapshot.name}" 저장본을 복원했습니다.`);
+    void loadAdminData();
+  }
+
+  async function resetWeeklySchedules() {
+    if (!window.confirm("현재 반복 스케줄과 학원드랍을 모두 초기화할까요? 저장본과 예외 일정은 유지됩니다.")) {
+      return;
+    }
+
+    if (!window.confirm("정말 초기화할까요? 현재 반복 시간표는 비워집니다.")) {
+      return;
+    }
+
+    setIsSaving(true);
+    const error = await deleteCurrentWeeklySchedules();
+    setIsSaving(false);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("현재 반복 시간표를 초기화했습니다. 저장본과 예외 일정은 유지됩니다.");
+    void loadAdminData();
+  }
+
+  async function deleteScheduleSnapshot(snapshot: ScheduleSnapshot) {
+    if (!window.confirm(`"${snapshot.name}" 저장본을 삭제할까요?`)) {
+      return;
+    }
+
+    const { error } = await getSupabase().from("schedule_snapshots").delete().eq("id", snapshot.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("저장본을 삭제했습니다.");
+    void loadAdminData();
+  }
+
   async function loadAdminData() {
     const supabase = getSupabase();
-    const [studentsResult, weeklyResult, exceptionsResult, allExceptionLocationsResult, checkLogsResult] = await Promise.all([
+    const [
+      studentsResult,
+      weeklyResult,
+      exceptionsResult,
+      allExceptionLocationsResult,
+      checkLogsResult,
+      snapshotsResult,
+    ] = await Promise.all([
       supabase.from("students").select("id, name, memo, is_active").order("name"),
       supabase
         .from("weekly_schedules")
@@ -275,6 +445,10 @@ export function AdminPanel() {
         .order("target_date", { ascending: false })
         .order("done_at", { ascending: false, nullsFirst: false })
         .limit(100),
+      supabase
+        .from("schedule_snapshots")
+        .select("id, name, payload, created_at, updated_at")
+        .order("created_at", { ascending: false }),
     ]);
 
     if (
@@ -282,12 +456,14 @@ export function AdminPanel() {
       weeklyResult.error ||
       exceptionsResult.error ||
       allExceptionLocationsResult.error ||
-      checkLogsResult.error
+      checkLogsResult.error ||
+      snapshotsResult.error
     ) {
       setMessage(
         studentsResult.error?.message ??
           weeklyResult.error?.message ??
           exceptionsResult.error?.message ??
+          snapshotsResult.error?.message ??
           checkLogsResult.error?.message ??
           "관리자 데이터를 불러오지 못했습니다.",
       );
@@ -297,6 +473,7 @@ export function AdminPanel() {
     setStudents((studentsResult.data ?? []) as Student[]);
     setWeeklySchedules((weeklyResult.data ?? []) as unknown as WeeklySchedule[]);
     setExceptions((exceptionsResult.data ?? []) as unknown as ScheduleException[]);
+    setSnapshots((snapshotsResult.data ?? []) as unknown as ScheduleSnapshot[]);
     setAllExceptionLocations(
       (allExceptionLocationsResult.data ?? [])
         .map((item) => item.location)
@@ -825,6 +1002,38 @@ export function AdminPanel() {
               {message}
             </div>
           ) : null}
+
+          <Panel title="시간표 저장/복원">
+            <form onSubmit={saveScheduleSnapshot} className="space-y-3">
+              <Input value={snapshotName} onChange={setSnapshotName} placeholder="저장 이름 예: 2026 1학기" />
+              <SubmitButton disabled={isSaving}>현재 시간표 저장</SubmitButton>
+            </form>
+            <button
+              type="button"
+              disabled={isSaving || weeklySchedules.length === 0}
+              onClick={() => void resetWeeklySchedules()}
+              className="h-11 w-full rounded-lg bg-red-50 text-sm font-black text-red-700 disabled:bg-stone-100 disabled:text-stone-400"
+            >
+              현재 반복 시간표 초기화
+            </button>
+            <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+              {snapshots.length === 0 ? (
+                <p className="rounded-lg bg-stone-50 px-3 py-4 text-sm font-medium text-stone-500">
+                  저장된 시간표가 없습니다.
+                </p>
+              ) : (
+                snapshots.map((snapshot) => (
+                  <SnapshotRow
+                    key={snapshot.id}
+                    snapshot={snapshot}
+                    isSaving={isSaving}
+                    onRestore={() => void restoreScheduleSnapshot(snapshot)}
+                    onDelete={() => void deleteScheduleSnapshot(snapshot)}
+                  />
+                ))
+              )}
+            </div>
+          </Panel>
 
           <Panel title="확인">
             <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
@@ -1359,6 +1568,56 @@ function CheckLogRow({ log }: { log: CheckLog }) {
       <p className="mt-1 truncate text-xs font-bold text-stone-500">
         {log.target_date} {time} {typeLabel} {location}
       </p>
+    </div>
+  );
+}
+
+function SnapshotRow({
+  snapshot,
+  isSaving,
+  onRestore,
+  onDelete,
+}: {
+  snapshot: ScheduleSnapshot;
+  isSaving: boolean;
+  onRestore: () => void;
+  onDelete: () => void;
+}) {
+  const scheduleCount = snapshot.payload.weekly_schedules.length;
+  const createdAt = new Intl.DateTimeFormat("ko-KR", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(snapshot.created_at));
+
+  return (
+    <div className="rounded-lg border border-stone-200 bg-stone-50 p-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-black text-stone-900">{snapshot.name}</p>
+        <p className="mt-1 text-xs font-bold text-stone-500">
+          {createdAt} · 반복 {scheduleCount}개
+        </p>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          disabled={isSaving}
+          onClick={onRestore}
+          className="h-10 rounded-lg bg-emerald-700 text-sm font-black text-white disabled:bg-stone-300"
+        >
+          복원
+        </button>
+        <button
+          type="button"
+          disabled={isSaving}
+          onClick={onDelete}
+          className="h-10 rounded-lg bg-red-50 text-sm font-black text-red-700 disabled:bg-stone-100 disabled:text-stone-400"
+        >
+          삭제
+        </button>
+      </div>
     </div>
   );
 }
