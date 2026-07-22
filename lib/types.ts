@@ -75,12 +75,23 @@ export type ScheduleGroupOrder = {
 
 export type ScheduleSnapshotPayload = {
   weekly_schedules: Array<{
+    source_id?: string;
     student_id: string | null;
     day_of_week: number;
     run_time: string;
     schedule_type: ScheduleType;
     location: string;
     is_active: boolean;
+  }>;
+  schedule_exceptions?: Array<{
+    student_id: string | null;
+    weekly_schedule_id: string | null;
+    target_date: string;
+    run_time: string | null;
+    schedule_type: ScheduleType | null;
+    location: string | null;
+    exception_type: ExceptionType;
+    memo: string | null;
   }>;
   schedule_group_orders?: ScheduleGroupOrder[];
 };

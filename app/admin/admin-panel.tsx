@@ -276,6 +276,19 @@ export function AdminPanel() {
     return weeklyResult.error ?? orderResult.error ?? null;
   }
 
+  async function deleteCurrentSavedSchedules() {
+    const supabase = getSupabase();
+    const alwaysDifferentUuid = "00000000-0000-0000-0000-000000000000";
+
+    const [exceptionResult, weeklyResult, orderResult] = await Promise.all([
+      supabase.from("schedule_exceptions").delete().neq("id", alwaysDifferentUuid),
+      supabase.from("weekly_schedules").delete().neq("id", alwaysDifferentUuid),
+      supabase.from("schedule_group_orders").delete().neq("id", alwaysDifferentUuid),
+    ]);
+
+    return exceptionResult.error ?? weeklyResult.error ?? orderResult.error ?? null;
+  }
+
   async function saveScheduleSnapshot(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const name = snapshotName.trim();
@@ -285,23 +298,40 @@ export function AdminPanel() {
       return;
     }
 
-    const orderResult = await getSupabase()
-      .from("schedule_group_orders")
-      .select("day_of_week, run_time, schedule_type, location, sort_order");
+    const supabase = getSupabase();
+    const [orderResult, exceptionResult] = await Promise.all([
+      supabase
+        .from("schedule_group_orders")
+        .select("day_of_week, run_time, schedule_type, location, sort_order"),
+      supabase
+        .from("schedule_exceptions")
+        .select("student_id, weekly_schedule_id, target_date, run_time, schedule_type, location, exception_type, memo"),
+    ]);
 
-    if (orderResult.error) {
-      setMessage(orderResult.error.message);
+    if (orderResult.error || exceptionResult.error) {
+      setMessage(orderResult.error?.message ?? exceptionResult.error?.message ?? "저장 데이터를 불러오지 못했습니다.");
       return;
     }
 
     const payload: ScheduleSnapshotPayload = {
       weekly_schedules: weeklySchedules.map((schedule) => ({
+        source_id: schedule.id,
         student_id: schedule.student_id,
         day_of_week: schedule.day_of_week,
         run_time: formatTime(schedule.run_time),
         schedule_type: schedule.schedule_type,
         location: schedule.location,
         is_active: schedule.is_active,
+      })),
+      schedule_exceptions: ((exceptionResult.data ?? []) as ScheduleException[]).map((exception) => ({
+        student_id: exception.student_id,
+        weekly_schedule_id: exception.weekly_schedule_id,
+        target_date: exception.target_date,
+        run_time: exception.run_time ? formatTime(exception.run_time) : null,
+        schedule_type: exception.schedule_type,
+        location: exception.location,
+        exception_type: exception.exception_type,
+        memo: exception.memo,
       })),
       schedule_group_orders: (orderResult.data ?? []) as ScheduleGroupOrder[],
     };
@@ -319,16 +349,16 @@ export function AdminPanel() {
     }
 
     setSnapshotName("");
-    setMessage(`현재 반복 시간표를 "${name}" 이름으로 저장했습니다.`);
+    setMessage(`현재 전체 일정을 "${name}" 이름으로 저장했습니다.`);
     void loadAdminData();
   }
 
   async function restoreScheduleSnapshot(snapshot: ScheduleSnapshot) {
-    if (!window.confirm(`"${snapshot.name}" 저장본으로 현재 반복 시간표를 교체할까요?`)) {
+    if (!window.confirm(`"${snapshot.name}" 저장본으로 현재 전체 일정을 교체할까요?`)) {
       return;
     }
 
-    if (!window.confirm("현재 반복 스케줄과 학원드랍이 모두 삭제된 뒤 저장본으로 복원됩니다. 진행할까요?")) {
+    if (!window.confirm("현재 반복 스케줄, 학원드랍, 날짜별 변경 일정이 모두 삭제된 뒤 저장본으로 복원됩니다. 진행할까요?")) {
       return;
     }
 
@@ -348,9 +378,19 @@ export function AdminPanel() {
       location: order.location,
       sort_order: order.sort_order,
     }));
+    const exceptionRows = (payload.schedule_exceptions ?? []).map((exception) => ({
+      student_id: exception.student_id,
+      weekly_schedule_id: null,
+      target_date: exception.target_date,
+      run_time: exception.run_time ? formatTime(exception.run_time) : null,
+      schedule_type: exception.schedule_type,
+      location: exception.location,
+      exception_type: exception.exception_type,
+      memo: exception.memo,
+    }));
 
     setIsSaving(true);
-    const deleteError = await deleteCurrentWeeklySchedules();
+    const deleteError = await deleteCurrentSavedSchedules();
     if (deleteError) {
       setIsSaving(false);
       setMessage(deleteError.message);
@@ -358,9 +398,12 @@ export function AdminPanel() {
     }
 
     const supabase = getSupabase();
-    const [scheduleResult, orderResult] = await Promise.all([
+    const [scheduleResult, exceptionResult, orderResult] = await Promise.all([
       scheduleRows.length > 0
         ? supabase.from("weekly_schedules").insert(scheduleRows)
+        : Promise.resolve({ error: null }),
+      exceptionRows.length > 0
+        ? supabase.from("schedule_exceptions").insert(exceptionRows)
         : Promise.resolve({ error: null }),
       orderRows.length > 0
         ? supabase.from("schedule_group_orders").insert(orderRows)
@@ -368,8 +411,13 @@ export function AdminPanel() {
     ]);
     setIsSaving(false);
 
-    if (scheduleResult.error || orderResult.error) {
-      setMessage(scheduleResult.error?.message ?? orderResult.error?.message ?? "저장본을 복원하지 못했습니다.");
+    if (scheduleResult.error || exceptionResult.error || orderResult.error) {
+      setMessage(
+        scheduleResult.error?.message ??
+          exceptionResult.error?.message ??
+          orderResult.error?.message ??
+          "저장본을 복원하지 못했습니다.",
+      );
       return;
     }
 
@@ -1583,7 +1631,9 @@ function SnapshotRow({
   onRestore: () => void;
   onDelete: () => void;
 }) {
-  const scheduleCount = snapshot.payload.weekly_schedules.length;
+  const weeklyCount = snapshot.payload.weekly_schedules.length;
+  const exceptionCount = snapshot.payload.schedule_exceptions?.length ?? 0;
+  const scheduleCount = weeklyCount + exceptionCount;
   const createdAt = new Intl.DateTimeFormat("ko-KR", {
     month: "2-digit",
     day: "2-digit",
@@ -1597,7 +1647,7 @@ function SnapshotRow({
       <div className="min-w-0">
         <p className="truncate text-sm font-black text-stone-900">{snapshot.name}</p>
         <p className="mt-1 text-xs font-bold text-stone-500">
-          {createdAt} · 반복 {scheduleCount}개
+          {createdAt} · 전체 일정 {scheduleCount}개
         </p>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2">
