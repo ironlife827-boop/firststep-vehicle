@@ -276,8 +276,7 @@ export function AdminPanel() {
 
   function selectExceptionSearchStudent(studentId: string) {
     setExceptionSearchStudentId(studentId);
-    setExceptionGroupKey("");
-    setExceptionStudentIds([]);
+    setExceptionStudentIds([studentId]);
   }
 
   async function deleteCurrentWeeklySchedules() {
@@ -1307,18 +1306,6 @@ export function AdminPanel() {
               ) : (
                 <>
                   {exceptionDate ? (
-                    <StudentSearchPicker
-                      students={activeStudents}
-                      selectedId={exceptionSearchStudentId}
-                      onSelect={selectExceptionSearchStudent}
-                      onClear={() => {
-                        setExceptionSearchStudentId("");
-                        setExceptionGroupKey("");
-                        setExceptionStudentIds([]);
-                      }}
-                    />
-                  ) : null}
-                  {exceptionSearchStudentId ? (
                     <>
                       <Select value={exceptionGroupKey} onChange={selectExceptionGroup}>
                         <option value="">
@@ -1334,24 +1321,37 @@ export function AdminPanel() {
                         ))}
                       </Select>
                       {selectedExceptionGroup ? (
-                        <ScheduleStudentPicker
-                          schedules={selectedExceptionGroup.schedules}
-                          selectedIds={exceptionStudentIds}
-                          onToggle={toggleExceptionStudent}
-                          onSelectAll={() =>
-                            setExceptionStudentIds(
-                              selectedExceptionGroup.schedules
-                                .map((schedule) => schedule.student_id)
-                                .filter((studentId): studentId is string => Boolean(studentId)),
-                            )
-                          }
-                          onClear={() => setExceptionStudentIds([])}
-                        />
+                        <>
+                          <ScheduleStudentPicker
+                            schedules={selectedExceptionGroup.schedules}
+                            selectedIds={exceptionStudentIds}
+                            onToggle={toggleExceptionStudent}
+                            onSelectAll={() =>
+                              setExceptionStudentIds(
+                                selectedExceptionGroup.schedules
+                                  .map((schedule) => schedule.student_id)
+                                  .filter((studentId): studentId is string => Boolean(studentId)),
+                              )
+                            }
+                            onClear={() => setExceptionStudentIds([])}
+                          />
+                          <StudentSearchPicker
+                            students={activeStudents.filter((student) =>
+                              selectedExceptionGroup.schedules.some((schedule) => schedule.student_id === student.id),
+                            )}
+                            selectedId={exceptionSearchStudentId}
+                            onSelect={selectExceptionSearchStudent}
+                            onClear={() => {
+                              setExceptionSearchStudentId("");
+                              setExceptionStudentIds([]);
+                            }}
+                          />
+                        </>
                       ) : null}
                     </>
                   ) : (
                     <p className="rounded-lg bg-stone-50 px-3 py-3 text-sm font-bold text-stone-500">
-                      날짜 선택 후 학생을 검색해서 선택하세요.
+                      날짜를 선택하면 그날 일정 묶음을 고를 수 있습니다.
                     </p>
                   )}
                 </>
