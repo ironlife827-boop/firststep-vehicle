@@ -3,12 +3,22 @@
 import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { ACADEMY_DROP_LOCATION, DAYS, formatDoneTime, formatTime, getSchedulePriority, TYPE_LABEL } from "@/lib/schedule";
+import {
+  ACADEMY_DROP_LOCATION,
+  DAYS,
+  TYPE_LABEL,
+  buildScheduleItems,
+  formatDoneTime,
+  formatTime,
+  getSchedulePriority,
+  groupScheduleItems,
+} from "@/lib/schedule";
 import { getSupabase } from "@/lib/supabase";
 import type {
   DailyScheduleStatus,
   ExceptionType,
   ScheduleException,
+  ScheduleItem,
   ScheduleGroupOrder,
   ScheduleSnapshot,
   ScheduleSnapshotPayload,
@@ -43,6 +53,7 @@ const SCHEDULE_TYPES: { value: StudentScheduleType; label: string }[] = [
 const EXCEPTION_TYPES: { value: ExceptionType; label: string }[] = [
   { value: "ADD", label: "추가" },
   { value: "CANCEL", label: "취소" },
+  { value: "CHANGE", label: "변경" },
 ];
 
 export function AdminPanel() {
@@ -176,13 +187,18 @@ export function AdminPanel() {
     }
 
     const targetDay = getKoreanWeekday(exceptionDate);
-    const groups = groupWeeklySchedules(
+    const targetItems = buildScheduleItems(
       weeklySchedules
-        .filter((schedule) => schedule.schedule_type !== "MOVE")
-        .filter((schedule) => schedule.student_id !== null)
         .filter((schedule) => schedule.day_of_week === targetDay)
         .filter((schedule) => schedule.is_active),
-    );
+      exceptions.filter((exception) => exception.target_date === exceptionDate),
+      exceptionDate,
+    ).filter((item) => item.student_id !== null);
+
+    const groups = groupScheduleItems(targetItems, [], targetDay).map((group) => ({
+      ...group,
+      schedules: group.items,
+    }));
 
     if (!exceptionSearchStudentId) {
       return groups;
@@ -191,7 +207,7 @@ export function AdminPanel() {
     return groups.filter((group) =>
       group.schedules.some((schedule) => schedule.student_id === exceptionSearchStudentId),
     );
-  }, [exceptionDate, exceptionSearchStudentId, exceptionType, weeklySchedules]);
+  }, [exceptionDate, exceptionSearchStudentId, exceptionType, exceptions, weeklySchedules]);
 
   const selectedExceptionGroup = useMemo(
     () => exceptionScheduleGroups.find((group) => group.key === exceptionGroupKey) ?? null,
@@ -235,7 +251,7 @@ export function AdminPanel() {
     }
 
     if (
-      exceptionType === "CANCEL" &&
+      exceptionType !== "ADD" &&
       exceptionSearchStudentId &&
       selectedGroup.schedules.some((schedule) => schedule.student_id === exceptionSearchStudentId)
     ) {
@@ -784,55 +800,84 @@ export function AdminPanel() {
       return;
     }
 
-    if (exceptionType === "CANCEL" && !selectedExceptionGroup) {
-      setMessage("취소할 일정 묶음을 선택해 주세요.");
+    if (exceptionType !== "ADD" && !selectedExceptionGroup) {
+      setMessage(`${exceptionType === "CANCEL" ? "취소" : "변경"}할 일정 묶음을 선택해 주세요.`);
       return;
     }
 
-    if (exceptionType === "CANCEL" && exceptionStudentIds.length === 0) {
-      setMessage("취소할 학생을 선택해 주세요.");
+    if (exceptionType !== "ADD" && exceptionStudentIds.length === 0) {
+      setMessage(`${exceptionType === "CANCEL" ? "취소" : "변경"}할 학생을 선택해 주세요.`);
+      return;
+    }
+
+    if (exceptionType === "CHANGE" && (!exceptionLocation.trim() || !exceptionTime)) {
+      setMessage("변경할 시간과 위치를 입력해 주세요.");
       return;
     }
 
     const selectedBaseSchedules =
       selectedExceptionGroup?.schedules.filter((schedule) => exceptionStudentIds.includes(schedule.student_id ?? "")) ?? [];
 
-    const payloads =
-      exceptionType === "ADD"
-        ? exceptionStudentIds.map((studentId) => ({
-            student_id: studentId,
-            weekly_schedule_id: null,
-            target_date: exceptionDate,
-            run_time: exceptionTime,
-            schedule_type: exceptionScheduleType,
-            location: exceptionLocation.trim(),
-            exception_type: exceptionType,
-            memo: exceptionMemo.trim() || null,
-          }))
-        : selectedBaseSchedules.map((schedule) => ({
+    const payloads = exceptionType === "ADD"
+      ? exceptionStudentIds.map((studentId) => ({
+          student_id: studentId,
+          weekly_schedule_id: null,
+          target_date: exceptionDate,
+          run_time: exceptionTime,
+          schedule_type: exceptionScheduleType,
+          location: exceptionLocation.trim(),
+          exception_type: exceptionType,
+          memo: exceptionMemo.trim() || null,
+        }))
+      : selectedBaseSchedules
+          .filter((schedule) => schedule.source === "weekly")
+          .map((schedule) => ({
             student_id: schedule.student_id,
-            weekly_schedule_id: schedule.id,
+            weekly_schedule_id: schedule.weekly_schedule_id,
             target_date: exceptionDate,
-            run_time: null,
-            schedule_type: null,
-            location: null,
+            run_time: exceptionType === "CHANGE" ? exceptionTime : null,
+            schedule_type: exceptionType === "CHANGE" ? exceptionScheduleType : null,
+            location: exceptionType === "CHANGE" ? exceptionLocation.trim() : null,
             exception_type: exceptionType,
             memo: exceptionMemo.trim() || null,
           }));
 
+    const selectedExceptionIds = selectedBaseSchedules
+      .filter((schedule) => schedule.source === "exception" && schedule.schedule_exception_id)
+      .map((schedule) => schedule.schedule_exception_id as string);
+
     setIsSaving(true);
-    const { error } = await getSupabase().from("schedule_exceptions").insert(payloads as never[]);
+    const supabase = getSupabase();
+    const insertResult = payloads.length > 0
+      ? await supabase.from("schedule_exceptions").insert(payloads as never[])
+      : { error: null };
+    const exceptionMutationResults = await Promise.all(
+      selectedExceptionIds.map((id) =>
+        exceptionType === "CANCEL"
+          ? supabase.from("schedule_exceptions").delete().eq("id", id)
+          : supabase
+              .from("schedule_exceptions")
+              .update({
+                run_time: exceptionTime,
+                schedule_type: exceptionScheduleType,
+                location: exceptionLocation.trim(),
+                memo: exceptionMemo.trim() || null,
+              })
+              .eq("id", id),
+      ),
+    );
     setIsSaving(false);
 
-    if (error) {
-      setMessage(error.message);
+    const mutationError = exceptionMutationResults.find((result) => result.error)?.error;
+    if (insertResult.error || mutationError) {
+      setMessage(insertResult.error?.message ?? mutationError?.message ?? "예외 스케줄을 저장하지 못했습니다.");
       return;
     }
 
     setExceptionStudentIds([]);
     setExceptionGroupKey("");
     setExceptionMemo("");
-    setMessage(`스케줄 변경을 저장했습니다. ${payloads.length}개 적용`);
+    setMessage(`예외 스케줄을 저장했습니다. ${payloads.length + selectedExceptionIds.length}개 적용`);
     void loadAdminData();
   }
 
@@ -1221,7 +1266,7 @@ export function AdminPanel() {
             </div>
           </Panel>
 
-          <Panel title="스케줄 변경">
+          <Panel title="예외 스케줄 설정">
             <form onSubmit={addException} className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
                 <Select
@@ -1277,7 +1322,9 @@ export function AdminPanel() {
                     <>
                       <Select value={exceptionGroupKey} onChange={selectExceptionGroup}>
                         <option value="">
-                          {exceptionScheduleGroups.length > 0 ? "취소할 일정 묶음 선택" : "해당 학생 일정 없음"}
+                          {exceptionScheduleGroups.length > 0
+                            ? `${exceptionType === "CANCEL" ? "취소" : "변경"}할 일정 묶음 선택`
+                            : "해당 학생 일정 없음"}
                         </option>
                         {exceptionScheduleGroups.map((group) => (
                           <option key={group.key} value={group.key}>
@@ -1329,11 +1376,11 @@ export function AdminPanel() {
                 </>
               ) : null}
               <Input value={exceptionMemo} onChange={setExceptionMemo} placeholder="예외 메모" />
-              <SubmitButton disabled={isSaving}>스케줄 변경 저장</SubmitButton>
+              <SubmitButton disabled={isSaving}>예외 스케줄 저장</SubmitButton>
             </form>
           </Panel>
 
-          <Panel title="스케줄 관리">
+          <Panel title="반복 스케줄 관리">
             <ManageDayTabs selectedDay={scheduleManageDay} onSelect={setScheduleManageDay} />
             <Input value={scheduleFilter} onChange={setScheduleFilter} placeholder="학생/위치 검색" />
             <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto pr-1">
@@ -1774,7 +1821,7 @@ function ScheduleStudentPicker({
   onSelectAll,
   onClear,
 }: {
-  schedules: WeeklySchedule[];
+  schedules: Array<Pick<ScheduleItem, "id" | "student_id" | "student_name"> & { students?: Pick<Student, "name"> | null }>;
   selectedIds: string[];
   onToggle: (studentId: string) => void;
   onSelectAll: () => void;
@@ -1810,7 +1857,7 @@ function ScheduleStudentPicker({
                   : "border-emerald-200 bg-white text-stone-800"
               }`}
             >
-              {schedule.students?.name ?? "학생 없음"}
+              {schedule.students?.name ?? schedule.student_name ?? "학생 없음"}
             </button>
           );
         })}
